@@ -1,0 +1,52 @@
+---
+- name: Create URL
+  hosts: all
+  remote_user: root
+  gather_facts: false
+  vars:
+    KUTT_HOST: https://links.example.com
+    KUTT_API_KEY: REDACTED_KUTT_API_KEY
+
+  tasks:
+    - name: "Parse base64"
+      ansible.builtin.set_fact:
+        long_url: >-
+          {{ (base_url ~ (json_file | b64encode)) }}
+      
+    - name: "URL dump"
+      ansible.builtin.debug:
+        msg: "{{ long_url[:64] }}..."
+
+    - name: Create short link
+      uri:
+        url: "{{ KUTT_HOST }}/api/v2/links"
+        method: POST
+        headers:
+          X-API-KEY: "{{ KUTT_API_KEY }}"
+          Content-Type: "application/json"
+        body:
+          target: "{{ long_url }}"
+          expire_in: "{{ url_ttl }} minutes"
+        body_format: json
+        return_content: yes
+        status_code: [200, 201]
+      register: short_link_response
+
+    - name: Filter and truncate target in the response
+      set_fact:
+        truncated_response: >-
+          {{
+            short_link_response.json |
+            combine({
+              'target': short_link_response.json.target[:64] ~ '...'
+            })
+          }}
+      when: short_link_response.json.target is defined
+
+    - name: Show raw response for debugging (filtered)
+      debug:
+        var: truncated_response
+
+    - name: Display the short URL
+      debug:
+        msg: "Short URL is:\n**\n\n{{ short_link_response.json.link }}\n\n**\n\n"

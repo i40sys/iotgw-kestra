@@ -1,0 +1,9 @@
+---
+- name: Ansible connectivity check
+  hosts: all
+  remote_user: root
+  gather_facts: false
+
+  tasks:
+    - name: Ansible connectivity ping
+      ansible.builtin.ping:

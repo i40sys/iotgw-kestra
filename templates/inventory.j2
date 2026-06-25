@@ -1,0 +1,12 @@
+all:
+  children:
+    openwrt:
+      hosts:
+        {{ iotgw_ip }}:
+  vars:
+    ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+    ansible_user: 'root'
+    #ansible_ssh_pass: ''
+    #ansible_port: 5555
+    #ansible_connection: 'ssh'
+    ansible_python_interpreter: /usr/bin/python3

@@ -1,0 +1,101 @@
+id: connectivity-check
+namespace: iotgw-ng
+
+triggers:
+  - id: schedule
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "0 */6 * * *"
+
+inputs:
+  - id: target_ip
+    type: STRING
+    description: "IP address of the gateway to check."
+    defaults: "0.0.0.0"
+  - id: ssh_key_id
+    type: STRING
+    required: true
+    description: >-
+      KMS object id of the device SSH key (KMIP UniqueIdentifier,
+      e.g. device_ssh_<deviceId>). When set, the runner pod fetches the
+      private key from Cosmian KMS into keys/id_rsa (task-069). Empty for
+      the scheduled cron run (which has no device identity).
+    defaults: ""
+
+tasks:
+  - id: create_inventory_file
+    type: io.kestra.plugin.core.debug.Return
+    format: |
+      all:
+        hosts:
+          {{ inputs.target_ip }}:
+        vars:
+          ansible_user: 'root'
+          ansible_python_interpreter: /usr/bin/python3
+          ansible_ssh_private_key_file: "keys/id_rsa"
+          ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+
+  - id: stage_namespace_files
+    # connectivity_check.yml is self-contained (an ansible.builtin.ping); the
+    # only other file the pod needs is the KMS-fetch helper. Scoping the glob
+    # (vs "**") keeps the per-file fileSidecar upload fast (task-065 residual);
+    # the SSH key is no longer a namespace file — it is fetched from KMS below.
+    type: io.kestra.plugin.core.namespace.DownloadFiles
+    namespace: iotgw-ng
+    files:
+      - "connectivity_check.yml"
+      - "fetch_kms_key.py"
+
+  - id: run_connectivity_check
+    type: io.kestra.plugin.kubernetes.core.PodCreate
+    # No `connection` block: uses in-cluster service account.
+    # ServiceAccount `kestra` with Role `kestra-pod-runner` (deploy/k8s/base/kestra/kestra-rbac.yaml).
+    # Plugin: io.kestra.plugin.kubernetes v1.9.1; connection=null -> fabric8 auto-detects in-cluster.
+    # k8s namespace for the runner pod: `kestra` (namespace-per-subproject split,
+    # decision-020 / task-064 — the former `iotgw` namespace no longer exists).
+    namespace: kestra
+    metadata:
+      labels:
+        app.kubernetes.io/managed-by: kestra
+        kestra.io/flow: connectivity-check
+    # task-065: PodCreate (PluginUtilsService.validFilename) rejects inputFiles
+    # keys with a leading '/', which DownloadFiles emits for every namespace
+    # file. Rebuild the map as JSON: strip the leading '/' from each key
+    # (replace ^/ with regexp=true) and skip the synced .git/ blob (its binary
+    # pack needlessly bloats the per-file fileSidecar upload). Merge inventory.yml.
+    inputFiles: |
+      {
+      {% for key in outputs.stage_namespace_files.files | keys %}{% if (key | split('/'))[1] != '.git' %}  {{ (key | replace({'^/': ''}, regexp=true)) | json }}: {{ outputs.stage_namespace_files.files[key] | json }},
+      {% endif %}{% endfor %}  "inventory.yml": {{ outputs.create_inventory_file.value | json }}
+      }
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: ansible
+          image: cytopia/ansible:latest-tools
+          # task-069: fetch the per-device SSH key from Cosmian KMS in-pod.
+          # SSH_KEY_ID is a non-secret KMIP object id (safe to inline from the
+          # flow input). KMS_AUTH_TOKEN is the task-057 bearer token, mounted
+          # from the kms-auth Secret (bridged into the kestra namespace) via
+          # secretKeyRef — never inlined.
+          env:
+            - name: SSH_KEY_ID
+              value: "{{ inputs.ssh_key_id }}"
+            - name: KMS_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: kms-auth
+                  key: KMS_AUTH_TOKEN
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -e
+              if [ -n "$SSH_KEY_ID" ]; then
+                echo "Fetching device SSH key $SSH_KEY_ID from Cosmian KMS over the in-cluster FQDN..."
+                python3 fetch_kms_key.py
+              else
+                echo "No ssh_key_id provided (scheduled run) — skipping KMS fetch."
+              fi
+              chmod 600 keys/id_rsa
+              ansible-playbook -i inventory.yml connectivity_check.yml
+          workingDir: "{{ workingDir }}"

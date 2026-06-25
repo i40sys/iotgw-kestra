@@ -1,0 +1,65 @@
+---
+- name: "glpi-agent: Check if Docker stack is running"
+  community.docker.docker_compose_v2:
+    project_src: /opt/stacks/glpi
+    state: present
+  register: stack_status
+  ignore_errors: true
+
+- name: "glpi-agent: Teardown the Docker stack if running"
+  community.docker.docker_compose_v2:
+    project_src: /opt/stacks/glpi
+    state: absent
+  when: stack_status is not failed
+
+- name: "glpi-agent: Remove directory /opt/stacks/glpi"
+  ansible.builtin.file:
+    path: /opt/stacks/glpi
+    state: absent
+
+- name: "glpi-agent: clonning repos"
+  ansible.builtin.git:
+    repo: 'git@github.com:example-org/iotgw_glpi-agent.git'
+    dest: /opt/stacks/glpi
+    accept_hostkey: true
+    key_file: /root/.ssh/id_rsa
+
+
+- name: "glpi-agent: adding GIT pre-push hook"
+  ansible.builtin.copy:
+    src: pre-push
+    dest: /opt/stacks/glpi/.git/hooks/pre-push
+    owner: root
+    group: root
+    mode: '0755'
+
+
+- name: "glpi-agent: Fetch env.j2"
+  ansible.builtin.fetch:
+    src: /opt/stacks/glpi/env.j2
+    dest: /tmp/env.j2
+    flat: yes
+
+- name: "glpi-agent: Template env.j2"
+  ansible.builtin.template:
+    src: /tmp/env.j2
+    dest: /opt/stacks/glpi/.env
+    owner: root
+    group: root
+    mode: '0640'
+
+- name: "glpi-agent: docker login ghcr.io"
+  community.docker.docker_login:
+    registry_url: ghcr.io
+    username: ghcr
+    password: "{{ ghcr_pat }}"
+
+- name: "glpi-agent: Start Docker stack"
+  community.docker.docker_compose_v2:
+    project_src: /opt/stacks/glpi
+    state: present
+  register: output
+
+- name: "glpi-agent: Display stack startup logs"
+  ansible.builtin.debug:
+    var: output

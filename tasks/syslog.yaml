@@ -1,0 +1,37 @@
+---
+- name: "syslog: Install packages using opkg"
+  community.general.opkg:
+    name: "{{ item }}"
+    state: present
+  loop:
+    - rsyslog
+
+- name: "syslog: system configuration"
+  ansible.builtin.template:
+    src: templates/syslog/rsyslog.j2
+    dest: /etc/config/rsyslog
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: "syslog: daemon configuration"
+  ansible.builtin.template:
+    src: templates/syslog/rsyslog.conf.j2
+    dest: /etc/rsyslog.conf
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: "syslog: uci commit changes"
+  uci:
+    command: commit
+
+- name: "syslog: enable syslog service on boot"
+  community.general.openwrt_init:
+    name: rsyslog
+    enabled: yes
+
+- name: "syslog: start syslog service"
+  community.general.openwrt_init:
+    name: rsyslog
+    state: restarted

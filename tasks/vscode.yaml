@@ -1,0 +1,64 @@
+---
+- name: "VSCode: Check if Docker stack is running"
+  community.docker.docker_compose_v2:
+    project_src: /opt/stacks/vscode
+    state: present
+  register: stack_status
+  ignore_errors: true
+
+- name: "VSCode: Teardown the Docker stack if running"
+  community.docker.docker_compose_v2:
+    project_src: /opt/stacks/vscode
+    state: absent
+  when: stack_status is not failed
+
+- name: "VSCode: Remove directory /opt/stacks/vscode"
+  ansible.builtin.file:
+    path: /opt/stacks/vscode
+    state: absent
+  when: stack_status is not failed
+
+- name: "VSCode: Clone VSCode repository"
+  ansible.builtin.git:
+    repo: 'git@github.com:example-org/iotgw_vscode.git'
+    dest: /opt/stacks/vscode
+    accept_hostkey: true
+    key_file: /root/.ssh/id_rsa
+
+- name: "VSCode: Add GIT pre-push hook"
+  ansible.builtin.copy:
+    src: pre-push
+    dest: /opt/stacks/vscode/.git/hooks/pre-push
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: "VSCode: Fetch .env.j2"
+  ansible.builtin.fetch:
+    src: /opt/stacks/vscode/.env.j2
+    dest: /tmp/.env.j2
+    flat: yes
+
+- name: "VSCode: Template .env.j2"
+  ansible.builtin.template:
+    src: /tmp/.env.j2
+    dest: /opt/stacks/vscode/.env
+    owner: root
+    group: root
+    mode: '0640'
+
+- name: "VSCode: Clean up controller copy of .env.j2"
+  ansible.builtin.file:
+    path: /tmp/.env.j2
+    state: absent
+  delegate_to: localhost
+
+- name: "VSCode: Start Docker stack"
+  community.docker.docker_compose_v2:
+    project_src: /opt/stacks/vscode
+    state: present
+  register: output
+
+- name: "VSCode: Display stack startup logs"
+  ansible.builtin.debug:
+    var: output

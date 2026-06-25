@@ -1,0 +1,62 @@
+
+config interface 'loopback'
+	option device 'lo'
+	option proto 'static'
+	option ipaddr '127.0.0.1'
+	option netmask '255.0.0.0'
+
+config globals 'globals'
+
+config device
+	option name 'br-lan'
+	option type 'bridge'
+	list ports 'eth1'
+	list ports 'eth2'
+	list ports 'eth3'
+	list ports 'eth4'
+	list ports 'eth5'
+	option ipv6 '0'
+  option stp '0'
+
+config interface 'lan'
+	option device 'br-lan'
+	option proto 'static'
+	option ipaddr '{{ local_ip_address }}'
+	option netmask '255.255.255.192'
+	option ip6assign '60'
+	option delegate '0'
+	list dns_search '{{ local_domain }}'
+
+config interface 'wan'
+	option device 'eth0'
+	option proto 'dhcp'
+
+config interface 'docker'
+	option device 'docker0'
+	option proto 'none'
+	option auto '0'
+
+config device
+	option type 'bridge'
+	option name 'docker0'
+
+config interface 'wg0'
+        option proto 'wireguard'
+        option private_key '{{ vpn_private_key }}'
+        list addresses '{{ vpn_ip_address }}'
+        option metric '5'
+
+config wireguard_wg0 'wgserver'
+        option public_key '{{ vpn_public_key }}'
+        option endpoint_host '{{ vpn_server_ip }}'
+        option endpoint_port '{{ vpn_server_port }}'
+        option persistent_keepalive '25'
+        option route_allowed_ips '1'
+        list allowed_ips '0.0.0.0/0'
+        option description 'netmaker.example.com'
+
+config route
+        option interface 'wan'                # your WAN interface name
+        option target '{{ vpn_server_ip }}'
+        option netmask '255.255.255.255'
+        option gateway '{{ ip_route_default_gw }}'

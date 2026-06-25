@@ -1,0 +1,77 @@
+{
+  "$schema": "https://raw.githubusercontent.com/JanDeDobbeleer/oh-my-posh/main/themes/schema.json",
+  "blocks": [
+    {
+      "alignment": "left",
+      "segments": [
+        {
+          "foreground": "#edff47",
+          "style": "plain",
+          "template": " \uf2c0 {{ if .SSHSession }}\uf817 {{ end }}{{ .UserName }}@{{ .HostName }} ",
+          "type": "session"
+        },
+        {
+          "foreground": "#ffffff",
+          "properties": {
+            "style": "folder"
+          },
+          "style": "plain",
+          "template": " \uf07b  {{ .Path }} ",
+          "type": "path"
+        },
+        {
+          "foreground": "#41bb80",
+          "properties": {
+            "branch_max_length": 25,
+            "fetch_stash_count": true,
+            "fetch_status": true,
+            "fetch_upstream_icon": true
+          },
+          "style": "plain",
+          "type": "git"
+        },
+        {
+          "type": "python",
+          "style": "plain",
+          "foreground": "#ce67fa",
+          "template": " \ue235 {{ if .Error }}{{ .Error }}{{ else }}{{ if .Venv }}{{ .Venv }} {{ end }}{{ .Full }}{{ end }}"
+        },
+        {          
+          "type": "kubectl",
+          "style": "plain",
+          "foreground": "#59baeb",
+          "template": " \ufd31 ctx: {{.Context}} {{if .Namespace}}ns: {{.Namespace}}{{end}} "
+        },
+        {
+          "foreground": "#43992e",
+          "foreground_templates": [
+            "{{ if gt .Code 0 }}#f1184c{{ end }}"
+          ],
+          "properties": {
+            "always_enabled": true
+          },
+          "style": "plain",
+          "template": " {{ if gt .Code 0 }}\uf00d ({{ .Code }}){{ .Meaning }}{{ else }}\uf42e{{ end }} ",
+          "type": "exit"
+        }
+      ],
+      "type": "prompt"
+    },
+    {
+      "alignment": "left",
+      "newline": true,
+      "segments": [
+        {
+          "foreground": "#ffffff",
+          "style": "plain",
+          "template": "{{ if .Root }}#{{ else }}${{ end }}",
+          "type": "text"
+        }
+      ],
+      "type": "prompt"
+    }
+  ],
+  "console_title_template": "{{ .Shell }} in {{ .Folder }}",
+  "final_space": true,
+  "version": 2
+}
