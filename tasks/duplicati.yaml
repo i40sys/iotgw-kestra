@@ -1,0 +1,77 @@
+---
+- name: "duplicati: Check if Docker stack is running"
+  community.docker.docker_compose_v2:
+    project_src: /opt/stacks/duplicati
+    state: present
+  register: stack_status
+  ignore_errors: true
+
+- name: "duplicati: Teardown the Docker stack if running"
+  community.docker.docker_compose_v2:
+    project_src: /opt/stacks/duplicati
+    state: absent
+  when: stack_status is not failed
+
+- name: "duplicati: Remove directory /opt/stacks/duplicati"
+  ansible.builtin.file:
+    path: /opt/stacks/duplicati
+    state: absent
+
+- name: "duplicati stack: clonning repos"
+  ansible.builtin.git:
+    repo: 'git@github.com:example-org/iotgw_duplicati.git'
+    dest: /opt/stacks/duplicati
+    accept_hostkey: true
+    key_file: /root/.ssh/id_rsa
+
+- name: "duplicati: adding GIT pre-push hook"
+  ansible.builtin.copy:
+    src: pre-push
+    dest: /opt/stacks/duplicati/.git/hooks/pre-push
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: "duplicati: Fetch env.j2"
+  ansible.builtin.fetch:
+    src: /opt/stacks/duplicati/env.j2
+    dest: /tmp/env.j2
+    flat: yes
+
+- name: "duplicati: Template env.j2"
+  ansible.builtin.template:
+    src: /tmp/env.j2
+    dest: /opt/stacks/duplicati/.env
+    owner: root
+    group: root
+    mode: '0640'
+
+- name: "duplicati: Fetch backup configuration templates {{ item }}"
+  ansible.builtin.fetch:
+    src: "/opt/stacks/duplicati/import/{{ item }}.j2"
+    dest: "/tmp/{{ item }}.j2"
+    flat: yes
+  loop:
+    - Docker-duplicati-config.json
+    - System-duplicati-config.json
+
+- name: "duplicati: Template backup configuration file {{ item }}"
+  ansible.builtin.template:
+    src: "/tmp/{{ item }}.j2"
+    dest: "/opt/stacks/duplicati/import/{{ item }}"
+    owner: root
+    group: root
+    mode: '0640'
+  loop:
+    - Docker-duplicati-config.json
+    - System-duplicati-config.json
+
+- name: "duplicati: Start Docker stack"
+  community.docker.docker_compose_v2:
+    project_src: /opt/stacks/duplicati
+    state: present
+  register: output
+
+- name: "duplicati: Display stack startup logs"
+  ansible.builtin.debug:
+    var: output

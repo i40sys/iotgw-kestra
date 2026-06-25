@@ -1,0 +1,151 @@
+---
+- name: "nodered: Check if Docker stack is running"
+  community.docker.docker_compose_v2:
+    project_src: /opt/stacks/nodered
+    state: present
+  register: stack_status
+  ignore_errors: true
+
+- name: "nodered: Teardown the Docker stack if running"
+  community.docker.docker_compose_v2:
+    project_src: /opt/stacks/nodered
+    state: absent
+  when: stack_status is not failed
+
+- name: "nodered: Remove directory /opt/stacks/nodered"
+  ansible.builtin.file:
+    path: /opt/stacks/nodered
+    state: absent
+
+- name: "nodered: clonning repos"
+  ansible.builtin.git:
+    repo: 'git@github.com:example-org/iotgw_nodered.git'
+    dest: /opt/stacks/nodered
+    accept_hostkey: true
+    key_file: /root/.ssh/id_rsa
+
+- name: "nodered: adding GIT pre-push hook"
+  ansible.builtin.copy:
+    src: pre-push
+    dest: /opt/stacks/nodered/.git/hooks/pre-push
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: "nodered: setting up data directory"
+  ansible.builtin.file:
+    path: /opt/stacks/nodered/data
+    state: directory
+    owner: 1000
+    group: 1000
+    mode: '0755'
+
+- name: "nodered: cyphering admin password"
+  community.docker.docker_container:
+    name: nodered_temp
+    image: nodered/node-red:3.1
+    entrypoint: /usr/local/bin/node
+    command: >
+      -e "console.log(require('bcryptjs').hashSync('{{ nodered_password }}', 8));"
+    network_mode: host
+    auto_remove: false  # Disable auto_remove to capture the output
+    detach: false       # Run in the foreground to capture output
+    tty: false
+  register: nodered_tmp
+
+- name: "nodered: show hashed password"
+  debug:
+    msg: "Hashed password is: {{ nodered_tmp.container.Output }}"
+
+- name: "nodered: remove temporary container"
+  community.docker.docker_container:
+    name: nodered_temp
+    state: absent
+
+- name: "nodered: Fetch env.j2"
+  ansible.builtin.fetch:
+    src: /opt/stacks/nodered/env.j2
+    dest: /tmp/env.j2
+    flat: yes
+
+- name: "nodered: Template env.j2"
+  ansible.builtin.template:
+    src: /tmp/env.j2
+    dest: /opt/stacks/nodered/.env
+    owner: root
+    group: root
+    mode: '0640'
+
+- name: "nodered: Fetch .config.projects.json.j2"
+  ansible.builtin.fetch:
+    src: /opt/stacks/nodered/data/.config.projects.json.j2
+    dest: /tmp/.config.projects.json.j2
+    flat: yes
+
+- name: "nodered: Update the .config.projects.json with new hostname"
+  ansible.builtin.template:
+    src: /tmp/.config.projects.json.j2
+    dest: /opt/stacks/nodered/data/.config.projects.json
+    force: true
+    owner: 1000
+    group: 1000
+    mode: '0644'
+
+- name: "nodered: clonning repos"
+  ansible.builtin.git:
+    repo: "git@github.com:example-org/flows.{{ iotgw_hostname }}.git"
+    dest: "/opt/stacks/nodered/data/projects/flows.{{ iotgw_hostname }}"
+    accept_hostkey: true
+    key_file: /root/.ssh/id_rsa
+
+- name: "nodered: Find all directories inside /opt/stacks/nodered/data"
+  ansible.builtin.find:
+    paths: /opt/stacks/nodered/data
+    recurse: yes
+    hidden: true
+    file_type: directory
+  register: directories
+
+- name: "nodered: set ownership and permissions on directories"
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: 1000
+    group: 1000
+    mode: '0755'
+  loop: "{{ directories.files }}"
+
+- name: "nodered: find all files inside /opt/stacks/nodered/data"
+  ansible.builtin.find:
+    paths: /opt/stacks/nodered/data
+    recurse: yes
+    hidden: true
+    file_type: file
+  register: files
+
+- name: "nodered: set ownership and permissions on files"
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: file
+    owner: 1000
+    group: 1000
+    mode: '0644'
+  loop: "{{ files.files }}"
+
+- name: "nodered: SSH key permissions"
+  ansible.builtin.file:
+    path: "/opt/stacks/nodered/data/projects/.sshkeys/admin_id_rsa"
+    state: file
+    owner: 1000
+    group: 1000
+    mode: '0600'
+
+- name: "nodered: Start Docker stack"
+  community.docker.docker_compose_v2:
+    project_src: /opt/stacks/nodered
+    state: present
+  register: output
+
+- name: "nodered: Display stack startup logs"
+  ansible.builtin.debug:
+    var: output

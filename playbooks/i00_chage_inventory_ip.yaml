@@ -1,0 +1,13 @@
+---
+- name: Learning
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: "Replacing IP address"
+      ansible.builtin.template:
+        src: templates/inventory.j2
+        dest: ../inventory/iotgw.yaml
+        owner: root
+        group: root
+        mode: '0644'
+      delegate_to: localhost

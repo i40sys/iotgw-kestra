@@ -1,0 +1,86 @@
+---
+- name: Installing OpenWRT
+  hosts: all
+  remote_user: root
+  gather_facts: false
+  vars:
+    target_disk: /dev/sda
+    openwrt_version: 23.05.4
+
+  tasks:
+    - import_tasks: tasks/partitions.yaml
+      tags: partitions
+
+    - name: Copy file copying script to the remote host
+      ansible.builtin.copy:
+        src: copy_files.sh
+        dest: /tmp/copy_files.sh
+        mode: "0755"
+
+    - name: Downloading OpenWRT {{ openwrt_version }} and copying files to the disk {{ target_disk }}
+      ansible.builtin.command:
+        cmd: /tmp/copy_files.sh "{{ target_disk }}" "{{ openwrt_version }}"
+
+    - name: Copy GRUB configuration script to the remote host
+      ansible.builtin.copy:
+        src: grub_config.sh
+        dest: /tmp/grub_config.sh
+        mode: "0755"
+
+    - name: Execute GRUB configuration script at {{ target_disk }}
+      ansible.builtin.command:
+        cmd: /tmp/grub_config.sh "{{ target_disk }}"
+    
+    - name: Copy script for setting up chroot
+      ansible.builtin.copy:
+        src: chroot.sh
+        dest: /tmp/chroot.sh
+        mode: "0755"
+
+    - name: Execute script for setting up chroot
+      ansible.builtin.command:
+        cmd: /tmp/chroot.sh "{{ target_disk }}"
+
+    - name: Copy GRUB installation script to the remote host
+      ansible.builtin.copy:
+        src: grub_install.sh
+        dest: /tmp/grub_install.sh
+        mode: "0755"
+
+    - name: Execute GRUB installation script to {{ target_disk }}
+      ansible.builtin.command:
+        cmd: /tmp/grub_install.sh "{{ target_disk }}"
+
+    - name: Copy script for setting /etc/config/fstab
+      ansible.builtin.copy:
+        src: setup_fstab.sh
+        dest: /tmp/setup_fstab.sh
+        mode: "0755"
+
+    - name: Execute script for setting /etc/config/fstab
+      ansible.builtin.command:
+        cmd: /tmp/setup_fstab.sh "{{ target_disk }}"
+
+    - name: Copy script for enabling Ansible for OpenWRT
+      ansible.builtin.copy:
+        src: enable_ansible.sh
+        dest: /tmp/enable_ansible.sh
+        mode: "0755"
+
+    - name: Enabling Ansible for OpenWRT script to {{ target_disk }}
+      ansible.builtin.command:
+        cmd: /tmp/enable_ansible.sh "{{ target_disk }}"
+
+    - name: Copy script for unsetting up chroot
+      ansible.builtin.copy:
+        src: unchroot.sh
+        dest: /tmp/unchroot.sh
+        mode: "0755"
+
+    - name: Execute script for unsetting up chroot
+      ansible.builtin.command:
+        cmd: /tmp/unchroot.sh "{{ target_disk }}"
+
+    - name: Everything done.
+      ansible.builtin.debug:
+        msg: "Reboot the target machine and boot with hard drive."

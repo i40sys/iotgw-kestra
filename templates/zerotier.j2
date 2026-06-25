@@ -1,0 +1,10 @@
+config zerotier 'global'
+        option enabled '1'
+        option secret '{{ zerotier_secret }}'
+
+config network 'iotgw_zt'
+        option id '{{ zerotier_network_id }}'
+        option allow_managed '1'
+        option allow_global '0'
+        option allow_default '0'
+        option allow_dns '0'

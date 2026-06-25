@@ -1,0 +1,115 @@
+id: provisioning
+namespace: iotgw-ng
+
+inputs:
+  - id: json_data
+    type: JSON
+    description: "The JSON input to be dumped by Ansible."
+    defaults: '{"target_disk": "/dev/nvme0n1","openwrt_version": "23.05.4", "target_ip": "0.0.0.0", "ssh_key_id": "", "__tags__": []}'
+
+tasks:
+  - id: dump_input
+    type: io.kestra.plugin.core.log.Log
+    message:
+      - "Full JSON data: {{ inputs.json_data | json }}"
+      - "Tags: {{ inputs.json_data.__tags__ | default([]) | join(',') }}"
+
+  - id: create_inventory_file
+    type: io.kestra.plugin.core.debug.Return
+    format: |
+      all:
+        children:
+          openwrt:
+            hosts:
+              {{ inputs.json_data.target_ip }}:
+        vars:
+          ansible_user: 'root'
+          ansible_python_interpreter: /usr/bin/python3
+          ansible_ssh_private_key_file: "keys/id_rsa"
+          ansible_ssh_common_args: >-
+            -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+            -o ProxyCommand="ssh -i keys/id_rsa -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+            -W %h:%p -q root@{{ kv('VPN_JUMP_HOST') }}"
+
+  - id: stage_namespace_files
+    # Download all namespace files into Kestra internal storage so they can be
+    # injected as inputFiles into the Kubernetes pod via PodCreate.
+    # In the Docker-runner era this was handled automatically by
+    # `namespaceFiles: enabled: true`; PodCreate has no equivalent, so we
+    # replicate it with an explicit DownloadFiles step.
+    type: io.kestra.plugin.core.namespace.DownloadFiles
+    namespace: iotgw-ng
+    files:
+      - "**"
+
+  - id: iotgw_deployment
+    type: io.kestra.plugin.kubernetes.core.PodCreate
+    # No `connection` block: uses in-cluster service account.
+    # ServiceAccount `kestra` with Role `kestra-pod-runner` (deploy/k8s/base/kestra/kestra-rbac.yaml).
+    # Plugin: io.kestra.plugin.kubernetes v1.9.1; connection=null → fabric8 auto-detects in-cluster.
+    # k8s namespace for the runner pod: `kestra` (namespace-per-subproject split,
+    # decision-020 / task-064 — the former `iotgw` namespace no longer exists).
+    namespace: kestra
+    metadata:
+      labels:
+        app.kubernetes.io/managed-by: kestra
+        kestra.io/flow: provisioning
+    # inputFiles accepts a Map<String,String> where value is either inline content or a Kestra URI.
+    # We merge the dynamic namespace-files map with the runtime-generated inventory.
+    # Pebble renders `outputs.stage_namespace_files.files` to the Map<path,URI> produced by DownloadFiles.
+    # task-065: PodCreate (PluginUtilsService.validFilename) rejects inputFiles
+    # keys with a leading '/', which DownloadFiles emits for every namespace
+    # file. Rebuild the map as JSON: strip the leading '/' from each key
+    # (replace ^/ with regexp=true) and skip the synced .git/ blob (its binary
+    # pack needlessly bloats the per-file fileSidecar upload). Merge inventory.yml.
+    inputFiles: |
+      {
+      {% for key in outputs.stage_namespace_files.files | keys %}{% if (key | split('/'))[1] != '.git' %}  {{ (key | replace({'^/': ''}, regexp=true)) | json }}: {{ outputs.stage_namespace_files.files[key] | json }},
+      {% endif %}{% endfor %}  "inventory.yml": {{ outputs.create_inventory_file.value | json }}
+      }
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: ansible
+          image: cytopia/ansible:latest-tools
+          # task-069: fetch the per-device SSH key from Cosmian KMS in-pod.
+          # SSH_KEY_ID (non-secret KMIP object id) comes from the backend-packed
+          # json_data.ssh_key_id; KMS_AUTH_TOKEN (task-057 bearer) is mounted
+          # from the kms-auth Secret via secretKeyRef — never inlined.
+          env:
+            - name: SSH_KEY_ID
+              value: "{{ inputs.json_data.ssh_key_id }}"
+            - name: KMS_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: kms-auth
+                  key: KMS_AUTH_TOKEN
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -e
+              pip install passlib
+              mkdir -p /etc/ansible/collections /etc/ansible/roles
+              ansible-galaxy collection install community.docker -p /etc/ansible/collections
+              ansible-galaxy collection install community.general -p /etc/ansible/collections
+              ansible-galaxy role install gekmihesg.openwrt -p /etc/ansible/roles
+              cat > ansible.cfg <<'ANSIBLECFG'
+              [defaults]
+              roles_path = /etc/ansible/roles:~/.ansible/roles:/usr/share/ansible/roles
+              collections_paths = /etc/ansible/collections:~/.ansible/collections:/usr/share/ansible/collections
+              ANSIBLECFG
+              if [ -n "$SSH_KEY_ID" ]; then
+                echo "Fetching device SSH key $SSH_KEY_ID from Cosmian KMS over the in-cluster FQDN..."
+                python3 fetch_kms_key.py
+              else
+                echo "No ssh_key_id provided — skipping KMS fetch."
+              fi
+              chmod 600 keys/id_rsa
+              {% if inputs.json_data.__tags__ is defined and inputs.json_data.__tags__ | length > 0 %}
+              ansible-playbook -i inventory.yml i11_provisioning_iotgw.yaml -e '{{ inputs.json_data | json }}' --tags '{{ inputs.json_data.__tags__ | join(",") }}'
+              {% else %}
+              ansible-playbook -i inventory.yml i11_provisioning_iotgw.yaml -e '{{ inputs.json_data | json }}'
+              {% endif %}
+          workingDir: "{{ workingDir }}"

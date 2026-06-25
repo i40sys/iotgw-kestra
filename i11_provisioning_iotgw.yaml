@@ -1,0 +1,78 @@
+---
+- name: Software and Configure provisioning
+  hosts: all
+  remote_user: root
+  gather_facts: false
+  vars:
+    iotgw_hostname: iot-gw_maq0
+    root_password: none
+    local_ip_address: 10.121.100.1
+    local_domain: localdomain
+    main_local_dns: 127.0.0.1
+    zeroter_network_id: '00000000'
+  roles:
+    - gekmihesg.openwrt
+    # - i40sys.iot_stack  
+
+  tasks:
+    - import_tasks: tasks/system.yaml
+      tags: system
+
+    - import_tasks: tasks/firewall.yaml
+      tags: firewall
+
+    - import_tasks: tasks/syslog.yaml
+      tags: syslog
+
+    - import_tasks: tasks/shell.yaml
+      tags: shell
+
+    - import_tasks: tasks/credentials.yaml
+      tags: credentials
+
+    - import_tasks: tasks/dockge.yaml
+      tags: dockge
+
+    - import_tasks: tasks/vscode.yaml
+      tags: vscode
+
+    - import_tasks: tasks/containers_exporter.yaml
+      tags: observability
+
+    - import_tasks: tasks/uptime-kuma.yaml
+      tags: observability
+
+    - import_tasks: tasks/observability.yaml
+      tags: observability
+
+    - import_tasks: tasks/mosquitto.yaml
+      tags: mosquitto
+
+    - import_tasks: tasks/glpi-agent.yaml
+      tags: glpi-agent
+
+    - import_tasks: tasks/telegraf.yaml
+      tags: telegraf
+
+    - import_tasks: tasks/duplicati.yaml
+      tags: duplicati
+
+    - import_tasks: tasks/nodered.yaml
+      tags: nodered
+
+    - import_tasks: tasks/bugfixing.yaml
+      tags: bugfixing
+
+    - import_tasks: tasks/netxms-agent.yaml
+      tags: netxms
+
+    - import_tasks: tasks/lldpd.yaml
+      tags: lldpd
+
+    - import_tasks: tasks/plc_sniffer.yaml
+      tags: plc_sniffer
+
+    - name: Everything done.
+      ansible.builtin.debug:
+        msg: "Reboot the target machine and boot with hard drive."
+      tags: always

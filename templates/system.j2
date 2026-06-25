@@ -1,0 +1,21 @@
+
+config system
+	option hostname '{{ iotgw_hostname }}'
+	option timezone 'CET-1CEST,M3.5.0,M10.5.0/3'
+	option ttylogin '0'
+	option log_size '64'
+	option urandom_seed '0'
+	option description 'IoT Gateway: {{ iotgw_hostname }}'
+	option zonename 'Europe/Madrid'
+	option log_proto 'tcp'
+	option conloglevel '8'
+	option cronloglevel '5'
+	option log_ip '127.0.0.1'
+	option log_port '5140'
+
+config timeserver 'ntp'
+	option enable_server '1'
+	option interface 'lan'
+	list server '{{ primary_ntp }}'
+	list server '{{ secundary_ntp }}'
+

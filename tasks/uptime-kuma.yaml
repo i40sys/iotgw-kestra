@@ -1,0 +1,114 @@
+---
+- name: "uptime-kuma: Check if Docker stack is running"
+  community.docker.docker_compose_v2:
+    project_src: /opt/stacks/uptime
+    state: present
+  register: stack_status
+  ignore_errors: true
+
+- name: "uptime-kuma: Teardown the Docker stack if running"
+  community.docker.docker_compose_v2:
+    project_src: /opt/stacks/uptime
+    state: absent
+  when: stack_status is not failed
+
+- name: "uptime-kuma: Remove directory /opt/stacks/uptime"
+  ansible.builtin.file:
+    path: /opt/stacks/uptime
+    state: absent
+
+- name: "uptime-kuma: clonning repos"
+  ansible.builtin.git:
+    repo: 'git@github.com:example-org/iotgw_uptime-kuma.git'
+    dest: /opt/stacks/uptime
+    accept_hostkey: true
+    key_file: /root/.ssh/id_rsa
+
+- name: "uptime-kuma: adding GIT pre-push hook"
+  ansible.builtin.copy:
+    src: pre-push
+    dest: /opt/stacks/uptime/.git/hooks/pre-push
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: "uptime-kuma: Fetch env.j2"
+  ansible.builtin.fetch:
+    src: /opt/stacks/uptime/env.j2
+    dest: /tmp/env.j2
+    flat: yes
+
+- name: "uptime-kuma: Template env.j2"
+  ansible.builtin.template:
+    src: /tmp/env.j2
+    dest: /opt/stacks/uptime/.env
+    owner: root
+    group: root
+    mode: '0640'
+
+- name: "uptime-kuma: remove env.j2"
+  ansible.builtin.file:
+    path: /tmp/env.j2
+    state: absent
+  delegate_to: localhost
+
+- name: "uptime-kuma: running permissions"
+  ansible.builtin.file:
+    dest: /opt/stacks/uptime/contrib/kuma-cli
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: "uptime-kuma: Fetch data_clean.tar.gz"
+  ansible.builtin.fetch:
+    src: /opt/stacks/uptime/data_clean.tar.gz
+    dest: /tmp/data_clean.tar.gz
+    flat: yes
+
+- name: "uptime-kuma: uncompress files/uptime-kuma/data_clean.tar.gz to /opt/stacks/uptime/"
+  ansible.builtin.unarchive:
+    src: /tmp/data_clean.tar.gz
+    dest: /opt/stacks/uptime/
+    owner: root
+    group: root
+
+- name: "uptime-kuma: remove data_clean.tar.gz"
+  ansible.builtin.file:
+    path: /tmp/data_clean.tar.gz
+    state: absent
+  delegate_to: localhost
+
+- name: "uptime-kuma: Set directory permissions"
+  ansible.builtin.file:
+    path: /opt/stacks/uptime/data
+    state: directory
+    recurse: yes
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: "uptime-kuma: Set file permissions"
+  ansible.builtin.find:
+    paths: /opt/stacks/uptime/data
+    recurse: yes
+    file_type: file
+  register: found_files
+
+- name: "uptime-kuma: Apply file permissions"
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    owner: root
+    group: root
+    mode: '0640'
+  with_items: "{{ found_files.files }}"
+
+- name: "uptime-kuma: Start Docker stack"
+  community.docker.docker_compose_v2:
+    project_src: /opt/stacks/uptime
+    state: present
+    recreate: always
+  register: output
+
+- name: "uptime-kuma: Display stack startup logs"
+  ansible.builtin.debug:
+    var: output

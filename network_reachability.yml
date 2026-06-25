@@ -1,0 +1,16 @@
+---
+- name: Network reachability
+  hosts: localhost
+  vars:
+    target_ip: "0.0.0.0"
+  tasks:
+    - name: Ping from VPN server
+      ansible.builtin.shell: |
+        ssh -i keys/id_rsa \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            root@203.0.113.10 "ping -c 2 {{ target_ip }}"
+      args:
+        executable: /bin/bash
+        

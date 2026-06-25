@@ -1,0 +1,67 @@
+---
+- name: "netxms: Check if Docker stack is running"
+  community.docker.docker_compose_v2:
+    project_src: /opt/stacks/netxms
+    state: present
+  register: stack_status
+  ignore_errors: true
+
+- name: "netxms: Teardown the Docker stack if running"
+  community.docker.docker_compose_v2:
+    project_src: /opt/stacks/netxms
+    state: absent
+  when: stack_status is not failed
+
+- name: "netxms: Remove directory /opt/stacks/netxms"
+  ansible.builtin.file:
+    path: /opt/stacks/netxms
+    state: absent
+
+- name: "netxms: Clone repository"
+  ansible.builtin.git:
+    repo: 'git@github.com:example-org/iotgw_netxms.git'
+    dest: /opt/stacks/netxms
+    accept_hostkey: true
+    key_file: /root/.ssh/id_rsa
+
+- name: "netxms: Adding GIT pre-push hook"
+  ansible.builtin.copy:
+    src: pre-push
+    dest: /opt/stacks/netxms/.git/hooks/pre-push
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: "netxms: Fetch env.j2 template"
+  ansible.builtin.fetch:
+    src: /opt/stacks/netxms/env.j2
+    dest: /tmp/netxms_env.j2
+    flat: yes
+  ignore_errors: true
+
+- name: "netxms: Template environment file"
+  ansible.builtin.template:
+    src: /tmp/netxms_env.j2
+    dest: /opt/stacks/netxms/.env
+    owner: root
+    group: root
+    mode: '0640'
+  when: ansible_failed_result is not defined
+
+- name: "netxms: Set proper ownership and permissions"
+  ansible.builtin.file:
+    path: /opt/stacks/netxms
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: "netxms: Start Docker stack"
+  community.docker.docker_compose_v2:
+    project_src: /opt/stacks/netxms
+    state: present
+  register: output
+
+- name: "netxms: Display stack startup logs"
+  ansible.builtin.debug:
+    var: output

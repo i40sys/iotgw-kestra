@@ -1,0 +1,97 @@
+id: install
+namespace: iotgw-ng
+
+inputs:
+  - id: json_data
+    type: JSON
+    description: "Target configuration for OpenWRT installation."
+    defaults: '{"target_disk": "/dev/sda", "openwrt_version": "23.05.4", "target_ip": "0.0.0.0", "ssh_key_id": "", "vpn_server_ip": "1.2.3.4", "vpn_server_port": 51820, "vpn_private_key": "", "vpn_public_key": "", "vpn_ip_address": "", "ip_route_default_gw": ""}'
+
+tasks:
+  - id: dump_input
+    type: io.kestra.plugin.core.log.Log
+    message:
+      - "Install OpenWRT on: {{ inputs.json_data.target_ip }} disk: {{ inputs.json_data.target_disk }}"
+
+  - id: create_inventory_file
+    type: io.kestra.plugin.core.debug.Return
+    format: |
+      all:
+        hosts:
+          {{ inputs.json_data.target_ip }}:
+        vars:
+          ansible_user: 'root'
+          ansible_python_interpreter: /usr/bin/python3
+          ansible_ssh_private_key_file: "keys/id_rsa"
+          ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+
+  - id: stage_namespace_files
+    # Download all namespace files (playbooks, tasks, templates, files/, keys/) so they
+    # are available inside the Kubernetes pod via PodCreate inputFiles injection.
+    # Previously handled automatically by `namespaceFiles: enabled: true` in the Docker runner.
+    type: io.kestra.plugin.core.namespace.DownloadFiles
+    namespace: iotgw-ng
+    files:
+      - "**"
+
+  - id: run_install
+    type: io.kestra.plugin.kubernetes.core.PodCreate
+    # No `connection` block: uses in-cluster service account.
+    # ServiceAccount `kestra` with Role `kestra-pod-runner` (deploy/k8s/base/kestra/kestra-rbac.yaml).
+    # Plugin: io.kestra.plugin.kubernetes v1.9.1; connection=null -> fabric8 auto-detects in-cluster.
+    # k8s namespace for the runner pod: `kestra` (namespace-per-subproject split,
+    # decision-020 / task-064 — the former `iotgw` namespace no longer exists).
+    namespace: kestra
+    metadata:
+      labels:
+        app.kubernetes.io/managed-by: kestra
+        kestra.io/flow: install
+    # task-065: PodCreate (PluginUtilsService.validFilename) rejects inputFiles
+    # keys with a leading '/', which DownloadFiles emits for every namespace
+    # file. Rebuild the map as JSON: strip the leading '/' from each key
+    # (replace ^/ with regexp=true) and skip the synced .git/ blob (its binary
+    # pack needlessly bloats the per-file fileSidecar upload). Merge inventory.yml.
+    inputFiles: |
+      {
+      {% for key in outputs.stage_namespace_files.files | keys %}{% if (key | split('/'))[1] != '.git' %}  {{ (key | replace({'^/': ''}, regexp=true)) | json }}: {{ outputs.stage_namespace_files.files[key] | json }},
+      {% endif %}{% endfor %}  "inventory.yml": {{ outputs.create_inventory_file.value | json }}
+      }
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: ansible
+          image: cytopia/ansible:latest-tools
+          # task-069: fetch the per-device SSH key from Cosmian KMS in-pod.
+          # SSH_KEY_ID (non-secret KMIP object id) comes from the backend-packed
+          # json_data.ssh_key_id; KMS_AUTH_TOKEN (task-057 bearer) is mounted
+          # from the kms-auth Secret via secretKeyRef — never inlined.
+          env:
+            - name: SSH_KEY_ID
+              value: "{{ inputs.json_data.ssh_key_id }}"
+            - name: KMS_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: kms-auth
+                  key: KMS_AUTH_TOKEN
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -e
+              if [ -n "$SSH_KEY_ID" ]; then
+                echo "Fetching device SSH key $SSH_KEY_ID from Cosmian KMS over the in-cluster FQDN..."
+                python3 fetch_kms_key.py
+              else
+                echo "No ssh_key_id provided — skipping KMS fetch."
+              fi
+              chmod 600 keys/id_rsa
+              ansible-playbook -i inventory.yml d01_install_owrt.yml \
+                -e "target_disk={{ inputs.json_data.target_disk }}" \
+                -e "openwrt_version={{ inputs.json_data.openwrt_version }}" \
+                -e "vpn_server_ip={{ inputs.json_data.vpn_server_ip }}" \
+                -e "vpn_server_port={{ inputs.json_data.vpn_server_port }}" \
+                -e "vpn_private_key={{ inputs.json_data.vpn_private_key }}" \
+                -e "vpn_public_key={{ inputs.json_data.vpn_public_key }}" \
+                -e "vpn_ip_address={{ inputs.json_data.vpn_ip_address }}" \
+                -e "ip_route_default_gw={{ inputs.json_data.ip_route_default_gw }}"
+          workingDir: "{{ workingDir }}"

@@ -1,0 +1,73 @@
+---
+- name: "partitions: Ensure the target disk exists and is a block device"
+  ansible.builtin.stat:
+    path: "{{ target_disk }}"
+  register: disk_stat
+
+- name: "partitions: Fail if target disk does not exist or is not a block device"
+  ansible.builtin.fail:
+    msg: "Error: {{ target_disk }} does not exist or is not a block device"
+  when: not (disk_stat.stat.exists and disk_stat.stat.isblk)
+
+- name: "Set partition prefix based on target disk name"
+  set_fact:
+    part_prefix: "{{ target_disk + ('p' if target_disk[-1] | regex_search('[0-9]') else '') }}"
+
+- name: "partitions: Find mounted partitions on target disk"
+  ansible.builtin.shell: "mount | grep '{{ target_disk }}' | cut -f 1 -d ' '"
+  register: mounted_partitions
+  changed_when: false
+
+- name: "partitions: Unmount mounted partitions on target disk"
+  ansible.builtin.shell: "umount -l {{ item }}"
+  loop: "{{ mounted_partitions.stdout_lines }}"
+  when: mounted_partitions.stdout_lines | length > 0
+  ignore_errors: yes
+
+- name: "partitions: Wipe existing partitions and create GPT partition table"
+  ansible.builtin.command: "sgdisk --zap-all {{ target_disk }}"
+
+- name: "partitions: Create bios_grub partition"
+  ansible.builtin.command: "sgdisk --new=128:2048:6143 --typecode=128:ef02 --change-name=128:bios_grub {{ target_disk }}"
+
+- name: "partitions: Create FAT16 partition"
+  ansible.builtin.command: "sgdisk --new=1:6144:40959 --typecode=1:0C00 --change-name=1:primary {{ target_disk }}"
+
+- name: "partitions: Set legacy_boot flag on partition 1"
+  ansible.builtin.command: "parted {{ target_disk }} set 1 legacy_boot on"
+
+- name: "partitions: Remove msftdata flag on partition 1"
+  ansible.builtin.command: "parted {{ target_disk }} set 1 msftdata off"
+
+- name: "partitions: Create FAT16 filesystem on partition 1"
+  ansible.builtin.command: "mkfs.fat -F16 -I {{ part_prefix }}1"
+
+- name: "partitions: Create ext4 partition (19MiB to 100GB)"
+  ansible.builtin.command: "sgdisk --new=2:40960:195312500 --typecode=2:8300 --change-name=2:primary {{ target_disk }}"
+
+- name: "partitions: Create ext4 filesystem on partition 2"
+  community.general.filesystem:
+    fstype: ext4
+    dev: "{{ part_prefix }}2"
+    force: yes
+
+- name: "partitions: Create ext4 partition (100GB to 100%)"
+  ansible.builtin.command: "sgdisk --new=3:195312501:0 --typecode=3:8300 --change-name=3:primary {{ target_disk }}"
+
+- name: "partitions: Create XFS filesystem on partition 3"
+  community.general.filesystem:
+    fstype: xfs
+    dev: "{{ part_prefix }}3"
+    opts: "-i nrext64=0"
+    force: yes
+
+- name: "partitions: Inform the OS of partition table changes"
+  ansible.builtin.command: "partprobe {{ target_disk }}"
+
+- name: "partitions: Getting the resulting partition table"
+  ansible.builtin.command: "sgdisk -p {{ target_disk }}"
+  register: part_table
+
+- name: "partitions: Print the resulting partition table"
+  ansible.builtin.debug:
+    msg: "{{ part_table.stdout }}"

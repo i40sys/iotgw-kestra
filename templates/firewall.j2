@@ -1,0 +1,212 @@
+
+config defaults
+  option input 'REJECT'
+  option output 'ACCEPT'
+  option forward 'REJECT'
+  option synflood_protect '1'
+
+config zone
+  option name 'lan'
+  option input 'ACCEPT'
+  option output 'ACCEPT'
+  option forward 'REJECT'
+  list network 'lan'
+  option masq '1'
+
+config zone
+  option name 'wan'
+  option input 'REJECT'
+  option output 'ACCEPT'
+  option forward 'REJECT'
+  option masq '1'
+  list network 'wan'
+
+config rule
+  option name 'SSH allowed'
+  list proto 'tcp'
+  option src '*'
+  option dest_port '22'
+  option target 'ACCEPT'
+
+config rule
+  option name 'HTTP allowed'
+  list proto 'tcp'
+  option src '*'
+  option dest_port '80'
+  option target 'ACCEPT'
+  option family 'ipv4'
+  option ipset 'ManagementIPs'
+
+config rule
+  option name 'Uptime Kuma allowed'
+  list proto 'tcp'
+  option src '*'
+  option dest_port '3003'
+  option target 'ACCEPT'
+  option family 'ipv4'
+  option ipset 'ManagementIPs'
+
+config rule
+  option name 'NodeRED allowed'
+  list proto 'tcp'
+  option src '*'
+  option dest_port '1880'
+  option target 'ACCEPT'
+  option family 'ipv4'
+  option ipset 'ManagementIPs'
+
+config rule
+  option name 'Dockge allowed'
+  list proto 'tcp'
+  option src '*'
+  option dest_port '5001'
+  option target 'ACCEPT'
+  option family 'ipv4'
+  option ipset 'ManagementIPs'
+
+config rule
+  option name 'Duplicati allowed'
+  list proto 'tcp'
+  option src '*'
+  option dest_port '8200'
+  option target 'ACCEPT'
+  option family 'ipv4'
+  option ipset 'ManagementIPs'
+
+config rule
+  option name 'VSCode allowed'
+  list proto 'tcp'
+  option src '*'
+  option dest_port '8443'
+  option target 'ACCEPT'
+  option family 'ipv4'
+  option ipset 'ManagementIPs'
+
+config rule
+  option name 'Alloy allowed'
+  list proto 'tcp'
+  option src '*'
+  option dest_port '12345'
+  option target 'ACCEPT'
+  option family 'ipv4'
+  option ipset 'ManagementIPs'
+
+config rule
+  option name 'GLPI agent allowed'
+  list proto 'tcp'
+  option src '*'
+  option dest_port '62354'
+  option target 'ACCEPT'
+  option family 'ipv4'
+  option ipset 'ManagementIPs'
+
+config rule
+  option name 'ttyd, web terminal'
+  list proto 'tcp'
+  option src '*'
+  option dest_port '7681'
+  option target 'ACCEPT'
+  option family 'ipv4'
+  option ipset 'ManagementIPs'
+
+config forwarding
+  option src 'docker'
+  option dest 'wan'
+
+config forwarding
+  option src 'wan'
+  option dest 'docker'
+
+config forwarding
+  option src 'docker'
+  option dest 'lan'
+
+config rule
+  option name 'ICMP allowed'
+  list proto 'icmp'
+  option src '*'
+  option target 'ACCEPT'
+
+config zone 'docker'
+  option input 'ACCEPT'
+  option output 'ACCEPT'
+  option forward 'ACCEPT'
+  option name 'docker'
+  list network 'docker'
+
+config forwarding
+  option src 'lan'
+  option dest 'docker'
+
+config ipset
+  option name 'PrivateIPs'
+  option comment 'Non-public IPs'
+  option family 'ipv4'
+  list entry '10.0.0.0/8'
+  list entry '192.168.0.0/16'
+  list entry '172.16.0.0/12'
+  list match 'dest_net'
+
+config rule
+  option name 'Lan > Wan - Private IPs - Allowed'
+  option src 'lan'
+  option dest 'wan'
+  option target 'ACCEPT'
+  option family 'ipv4'
+  option ipset 'PrivateIPs'
+  list proto 'all'
+
+config rule
+  option name 'AllowedInternet24h'
+  option family 'ipv4'
+  option src 'lan'
+  option ipset 'AllowedInternet24h'
+  option dest 'wan'
+  option target 'ACCEPT'
+  list proto 'all'
+
+config ipset
+  option name 'AllowedInternet24h'
+  option family 'ipv4'
+  list match 'src_ip'
+  option timeout '86400'
+
+config rule
+  option name 'AllowedInternetAlways'
+  option family 'ipv4'
+  option src 'lan'
+  option dest 'wan'
+  option target 'ACCEPT'
+  list proto 'all'
+  option ipset 'AllowedInternet'
+
+config ipset
+  option name 'AllowedInternet'
+  option family 'ipv4'
+  list match 'src_ip'
+
+config redirect
+  option dest 'lan'
+  option target 'DNAT'
+  option name 'MQTT'
+  option family 'ipv4'
+  list proto 'tcp'
+  option src 'wan'
+  option src_dport '1883'
+  option dest_ip '{{ local_ip_address }}'
+  option dest_port '1883'
+
+config ipset
+  option name 'ManagementIPs'
+  option family 'ipv4'
+  list match 'src_net'
+  list entry '127.0.0.0/8'
+  list entry '10.2.0.47/32'
+
+config rule
+  option name 'netxms'
+  list proto 'tcp'
+  option src '*'
+  list src_ip '192.168.1.22'
+  option dest_port '4700'
+  option target 'ACCEPT'

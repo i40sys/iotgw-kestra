@@ -1,0 +1,207 @@
+---
+- name: "system: checking resolv.conf link"
+  ansible.builtin.file:
+    src: /tmp/resolv.conf
+    dest: /etc/resolv.conf
+    state: link
+    force: yes
+    owner: root
+    group: root
+
+- name: "system: Install packages using opkg"
+  community.general.opkg:
+    update_cache: true
+    name: bash
+    state: present
+
+- name: "system: Read package list from file"
+  ansible.builtin.slurp:
+    src: files/lists/packages.lst
+  register: package_file
+  delegate_to: localhost
+
+- name: "system: Convert package list to items"
+  ansible.builtin.set_fact:
+    package_list: "{{ package_file.content | b64decode | split('\n') | select('match', '^\\S+$') | list }}"
+
+- name: "system: Get list of already installed packages"
+  ansible.builtin.command: opkg list-installed
+  register: installed_packages
+
+- name: "system: Parse installed packages"
+  ansible.builtin.set_fact:
+    installed_package_list: "{{ installed_packages.stdout_lines | map('regex_replace', '\\s+.*$', '') | list }}"
+
+- name: "system: Determine packages to install"
+  ansible.builtin.set_fact:
+    packages_to_install: "{{ package_list | difference(installed_package_list) }}"
+
+- name: "system: Debug summary of packages"
+  ansible.builtin.debug:
+    msg: |
+      Summary of Packages:
+      - Number of packages to install from file: {{ package_list | length }}
+      - Number of installed packages: {{ installed_package_list | length }}
+      - Number of packages to install after contrasting: {{ packages_to_install | length }}
+
+- name: "system: Install packages using opkg"
+  community.general.opkg:
+    name: "{{ item }}"
+    state: present
+  loop: "{{ packages_to_install }}"
+
+- name: "system: Installing usermod for changing root password"
+  community.general.opkg:
+    name: shadow-usermod
+    state: present
+
+- name: "system: setting root password"
+  ansible.builtin.user:
+    name: root
+    password: "{{ root_password | password_hash('sha512') }}"
+    shell: /bin/bash
+
+- name: "system: Replace sftp-server with internal-sftp in sshd_config"
+  lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: '^Subsystem\s+sftp\s+'
+    line: 'Subsystem sftp internal-sftp'
+    backup: yes
+
+- name: "system: sshd service reload and restart"
+  ansible.builtin.shell: |
+      /etc/init.d/sshd reload
+      /etc/init.d/sshd restart
+
+- name: "system: setting SSH pub key"
+  ansible.builtin.copy:
+    src: credentials/id_rsa.pub
+    dest: /root/.ssh/id_rsa.pub
+    mode: "0644"
+  when: deploy_shared_ssh_key | default(false) | bool
+  
+- name: "system: setting SSH private key"
+  ansible.builtin.copy:
+    src: credentials/id_rsa
+    dest: /root/.ssh/id_rsa
+    mode: "0600"
+  when: deploy_shared_ssh_key | default(false) | bool
+
+- name: "system: configuration"
+  ansible.builtin.template:
+    src: templates/system.j2
+    dest: /etc/config/system
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: "system, luci: dark mode"
+  uci:
+    command: set
+    key: luci.main
+    value:
+      mediaurlbase: "/luci-static/bootstrap-dark"
+
+- name: "system, luci: timeout 0"
+  uci:
+    command: set
+    key: uhttpd.main
+    value:
+      http_keepalive: 0
+
+- name: "system: force hostname apply and create as /etc/machine-id"
+  ansible.builtin.shell: |
+      echo $(uci get system.@system[0].hostname) > /proc/sys/kernel/hostname
+      echo $(uci get system.@system[0].hostname) > /etc/machine-id
+
+- name: "system, network: configuration"
+  ansible.builtin.template:
+    src: templates/network.j2
+    dest: /etc/config/network
+    owner: root
+    group: root
+    mode: '0644'
+
+# uci import network < /tmp/network_backup.conf
+
+- name: "OpenWRT: Add network host entries using UCI"
+  ansible.builtin.shell: |
+    uci add dhcp host
+    uci set dhcp.@host[-1].name='{{ item.name }}'
+    uci set dhcp.@host[-1].ip='{{ item.ip }}'
+    uci add_list dhcp.@host[-1].mac='{{ item.mac }}'
+    uci set dhcp.@host[-1].leasetime='24h'
+  loop: "{{ dhcp_hosts }}"
+  when: dhcp_hosts is defined and dhcp_hosts | length > 0
+
+- name: "system, dhcp: configuration"
+  ansible.builtin.template:
+    src: templates/dhcp.j2
+    dest: /etc/config/dhcp
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: "system, dockerd: configuration"
+  ansible.builtin.template:
+    src: templates/dockerd.j2
+    dest: /etc/config/dockerd
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: "system, dockerd: creating directory for daemon.json"
+  ansible.builtin.file:
+    path: /opt/docker/etc
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: "system, dockerd: configuration daemon.json"
+  ansible.builtin.template:
+    src: templates/daemon.json.j2
+    dest: /opt/docker/etc/daemon.json
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: "system, docker compose: copying script for downloading and installing plugin"
+  ansible.builtin.copy:
+    src: install_docker-compose.sh
+    dest: /tmp/install_docker-compose.sh
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: "system, docker compose: run script for downloading and installing plugin"
+  ansible.builtin.command:
+    cmd: /tmp/install_docker-compose.sh
+
+- name: "system, authossh: configuration"
+  ansible.builtin.template:
+    src: templates/autossh.j2
+    dest: /etc/config/autossh
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: "system, ttyd: configuration"
+  ansible.builtin.template:
+    src: templates/ttyd.j2
+    dest: /etc/config/ttyd
+    owner: root
+    group: root
+    mode: '0600'
+
+- name: "system, LuCI: modifying menu"
+  ansible.builtin.template:
+    src: files/apps.lua
+    dest: /usr/lib/lua/luci/controller/apps.lua
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: "system: python uv install"
+  ansible.builtin.shell: |
+    curl -LsSf https://astral.sh/uv/install.sh | sh

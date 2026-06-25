@@ -1,0 +1,35 @@
+---
+- name: "lldpd: Install packages using opkg"
+  community.general.opkg:
+    name: "{{ item }}"
+    state: present
+    update_cache: yes
+  loop:
+    - lldpd
+    - luci-app-lldpd
+
+- name: "lldpd: system configuration"
+  ansible.builtin.template:
+    src: templates/lldpd.j2
+    dest: /etc/config/lldpd
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: "lldpd: uci commit changes"
+  uci:
+    command: commit
+
+- name: "lldpd: enable lldpd service on boot"
+  community.general.openwrt_init:
+    name: lldpd
+    enabled: yes
+
+- name: "lldpd: restart lldpd service"
+  community.general.openwrt_init:
+    name: "{{ item }}"
+    state: restarted
+  loop:
+    - lldpd
+    - rpcd
+    - uhttpd

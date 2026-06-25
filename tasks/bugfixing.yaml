@@ -1,0 +1,26 @@
+---
+- name: STP bug
+  block:
+    - name: "bugfixing: Get current STP value"
+      command: uci get network.@device[0].stp
+      register: stp_value
+      ignore_errors: true
+
+    - name: "bugfixing: Show current STP value"
+      debug:
+        var: stp_value
+
+    - name: "bugfixing: Disable STP on bridge"
+      command: uci set network.@device[0].stp=0
+      register: stp_set
+
+    - name: "bugfixing: Commit network changes"
+      command: uci commit network
+
+    - name: "bugfixing: Get current STP value"
+      command: uci get network.@device[0].stp
+      register: stp_value
+
+    - name: "bugfixing: Show current STP value"
+      debug:
+        var: stp_value

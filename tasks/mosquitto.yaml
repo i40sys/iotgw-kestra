@@ -1,0 +1,186 @@
+---
+- name: "mosquitto: Check if Docker stack is running"
+  community.docker.docker_compose_v2:
+    project_src: /opt/stacks/mosquitto
+    state: present
+  register: stack_status
+  ignore_errors: true
+
+- name: "mosquitto: Teardown the Docker stack if running"
+  community.docker.docker_compose_v2:
+    project_src: /opt/stacks/mosquitto
+    state: absent
+  when: stack_status is not failed
+
+- name: "mosquitto: Remove directory /opt/stacks/mosquitto"
+  ansible.builtin.file:
+    path: /opt/stacks/mosquitto
+    state: absent
+
+- name: "mosquitto: clonning repos"
+  ansible.builtin.git:
+    repo: 'git@github.com:example-org/iotgw_mosquitto.git'
+    dest: /opt/stacks/mosquitto
+    accept_hostkey: true
+    key_file: /root/.ssh/id_rsa
+
+
+- name: "mosquitto: adding GIT pre-push hook"
+  ansible.builtin.copy:
+    src: pre-push
+    dest: /opt/stacks/mosquitto/.git/hooks/pre-push
+    owner: root
+    group: root
+    mode: '0755'
+
+
+- name: "mosquitto: Installing usermod for changing root password"
+  community.general.opkg:
+    name: "{{ item }}"
+    state: present
+  loop:
+    - shadow-usermod
+    - shadow-groupmod
+
+
+- name: "mosquitto: Create mosquitto group with GID 1883"
+  ansible.builtin.group:
+    name: mosquitto
+    gid: 1883
+    system: yes
+    state: present
+
+
+- name: "mosquitto: Create mosquitto user"
+  ansible.builtin.user:
+    name: mosquitto
+    uid: 1883
+    system: yes
+    create_home: no
+    home: /var/empty
+    shell: /sbin/nologin
+    group: mosquitto
+    comment: "mosquitto"
+
+
+- name: "mosquitto: creating required directories"
+  ansible.builtin.file:
+    path: "/opt/stacks/mosquitto/{{ item }}"
+    state: directory
+    owner: mosquitto
+    group: mosquitto
+    mode: '0755'
+  loop:
+    - etc
+    - data
+
+- name: "mosquitto: Fetch mosquitto.conf.j2"
+  ansible.builtin.fetch:
+    src: /opt/stacks/mosquitto/etc/mosquitto.conf.j2
+    dest: /tmp/mosquitto.conf.j2
+    flat: yes
+
+- name: "mosquitto: Template mosquitto.conf.j2"
+  ansible.builtin.template:
+    src: /tmp/mosquitto.conf.j2
+    dest: /opt/stacks/mosquitto/etc/mosquitto.conf
+    owner: mosquitto
+    group: mosquitto
+    mode: '0640'
+
+# docker run --rm --entrypoint /bin/sh \
+#   -v /opt/stacks/mosquitto/etc:/mosquitto/config \
+#   eclipse-mosquitto:2.0 \
+#     mosquitto_passwd -b /mosquitto/config/mqtt_users {{ mqtt_user }} {{ mqtt_password }}
+
+# docker exec -it mqtt /bin/sh
+# cd /mosquitto/data
+# mosquitto_passwd -b tmp username password
+
+# cd /docker-data/mqtt/etc
+# cat ../data/tmp >> mqtt_users
+# rm ../data/tmp
+
+- name: "mosquitto: /opt/stacks/mosquitto/etc/mqtt_users is present"
+  ansible.builtin.file:
+    path: /opt/stacks/mosquitto/etc/mqtt_users
+    state: touch
+    owner: mosquitto
+    group: mosquitto
+    mode: '0640'
+  
+
+- name: "mosquitto: add MQTT user using mosquitto_passwd in Docker"
+  community.docker.docker_container:
+    name: mosquitto_temp
+    image: eclipse-mosquitto:2.0
+    command: >
+      /usr/bin/mosquitto_passwd 
+        -b /mosquitto/config/mqtt_users 
+        {{ item.username }} 
+        {{ item.password }}
+    network_mode: host
+    volumes:
+      - /opt/stacks/mosquitto/etc:/mosquitto/config
+    auto_remove: true
+    state: started
+  loop: "{{ users }}"
+  when: users is defined and users | length > 0
+
+# Task to check if user {{ iiot_mqtt_user }} exists in EMQX authentication database
+- name: "mosquitto: Check if user {{ iiot_mqtt_user }} exists in EMQX"
+  uri:
+    #url: "{{ emqx_api_url }}/authentication/password_based%3Abuilt_in_database/users?limit=100&page=1"
+    url: "{{ emqx_api_url }}/authentication/password_based%3Abuilt_in_database/users?limit=20&page=1"
+    method: GET
+    headers:
+      Authorization: "Basic {{ (emqx_api_key + ':' + emqx_api_secret) | b64encode }}"
+      #Authorization: "Basic REDACTED_BASIC_AUTH"
+      Content-Type: "application/json"
+    return_content: yes
+  register: user_list
+  failed_when: user_list.status != 200
+
+# - ansible.builtin.debug:
+#     var: user_list
+
+# Task to create the user if it does not exist
+- name: "mosquitto: Create user {{ iiot_mqtt_user }} if not exists"
+  uri:
+    url: "{{ emqx_api_url }}/authentication/password_based%3Abuilt_in_database/users"
+    method: POST
+    headers:
+      Authorization: "Basic {{ (emqx_api_key + ':' + emqx_api_secret) | b64encode }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      user_id: "{{ iiot_mqtt_user }}"
+      password: "{{ iiot_mqtt_password }}"
+      is_superuser: true
+    status_code: 201
+  when: iiot_mqtt_user not in user_list.json.data | map(attribute='user_id')
+
+# Task to update the password if the user already exists
+- name: "mosquitto: Update password for user {{ iiot_mqtt_user }}"
+  uri:
+    url: "{{ emqx_api_url }}/authentication/password_based%3Abuilt_in_database/users/{{ iiot_mqtt_user }}"
+    method: PUT
+    headers:
+      Authorization: "Basic {{ (emqx_api_key + ':' + emqx_api_secret) | b64encode }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      password: "{{ iiot_mqtt_password }}"
+      is_superuser: true
+    status_code: 200
+  when: iiot_mqtt_user in user_list.json.data | map(attribute='user_id')
+
+- name: "mosquitto: Start Docker stack"
+  community.docker.docker_compose_v2:
+    project_src: /opt/stacks/mosquitto
+    state: present
+  register: output
+
+- name: "mosquitto: Display stack startup logs"
+  ansible.builtin.debug:
+    var: output

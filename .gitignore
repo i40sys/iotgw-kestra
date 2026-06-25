@@ -1,0 +1,13 @@
+# Kestra version history files
+*.v[0-9]*
+
+# OS files
+.DS_Store
+Thumbs.db
+__pycache__/
+*.pyc
+files/credentials/
+.claude/skills/.env
+inventory/iotgw.yaml
+inventory/test.yaml
+keys/
