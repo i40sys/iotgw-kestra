@@ -21,11 +21,7 @@ echo "nameserver 8.8.8.8" > /etc/resolv.conf
 opkg update
 opkg install openssh-server openssh-keygen openssh-sftp-server python3
 
-echo "=== Configuring SSH access ==="
-mkdir -p /root/.ssh/
-wget -O /root/.ssh/authorized_keys https://github.com/example-org.keys
-wget -O - https://links.example.com/ssh-pub-key 2>/dev/null >> /root/.ssh/authorized_keys
-chmod 600 /root/.ssh/authorized_keys
+echo "=== SSH access is installed OUTSIDE the chroot from a vendored key file (task-091) ==="
 
 echo "=== Enabling OpenSSH ==="
 sed -i 's/^#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config
@@ -40,5 +36,19 @@ if [ $? -ne 0 ]; then
     echo "Failed: Minimal OpenWRT setup for using Ansible."
     exit 1
 fi
+
+# --- SSH access: vendored break-glass keys, NO public-internet fetch (task-091) ---
+# The playbook drops the vendored key file at /tmp/authorized_keys (shipped in the
+# namespace blob, decision-025). We install it into the target rootfs directly —
+# no `wget github.com/*.keys` over plain HTTP redirects.
+if [ ! -s /tmp/authorized_keys ]; then
+    echo "Failed: /tmp/authorized_keys (vendored break-glass keys) is missing or empty."
+    exit 1
+fi
+mkdir -p "${MOUNT_PATH}2/root/.ssh"
+cp /tmp/authorized_keys "${MOUNT_PATH}2/root/.ssh/authorized_keys"
+chmod 700 "${MOUNT_PATH}2/root/.ssh"
+chmod 600 "${MOUNT_PATH}2/root/.ssh/authorized_keys"
+echo "Installed vendored authorized_keys into the target rootfs."
 
 echo "Minimal OpenWRT setup for using Ansible completed."

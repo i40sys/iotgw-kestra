@@ -73,6 +73,12 @@
         dest: /tmp/enable_ansible.sh
         mode: "0755"
 
+    - name: Ship the vendored break-glass authorized_keys (task-091, no public-internet fetch)
+      ansible.builtin.copy:
+        src: authorized_keys
+        dest: /tmp/authorized_keys
+        mode: "0644"
+
     - name: Enabling Ansible for OpenWRT script
       ansible.builtin.command:
         cmd: /tmp/enable_ansible.sh
