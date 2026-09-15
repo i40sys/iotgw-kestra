@@ -1,0 +1,227 @@
+---
+# tasks/ssh_ca.yaml — idempotent SSH-CA enrollment of a gateway (task-089).
+#
+# decision-026 phase 3, decision-025 change-map. Turns a gateway from raw-key
+# access into certificate access WITHOUT removing the break-glass keys:
+#   1. ensure an ecdsa-P256 host key (the private half never leaves the device;
+#      P-256 because pki-manager's ECIES KRL channel is P-256 only, decision-024);
+#   2. enroll via the `ssh-ca` EDGE FUNCTION over the device TOTP channel — the
+#      encryption is done on the CONTROLLER (openssl is not on the gateway), the
+#      gateway only receives public trust material and its own cert;
+#   3. install the host cert, the User CA anchor, auth_principals, an (empty)
+#      RevokedKeys, and two sshd drop-ins (50- break-glass sorts before 60- CA,
+#      so AuthorizedKeysFile wins and raw keys keep working);
+#   4. GATE on `sshd -t`, then RELOAD (never restart); on any failure remove the
+#      drop-ins, reload back, and fail loudly — a broken enrollment must leave
+#      the running sshd config intact and the gateway reachable.
+#
+# Proven on a real OpenWRT 23.05.4 gateway (2026-09-15, task-097). OpenWRT
+# specifics baked in below and confirmed on hardware:
+#   - the init service is `/etc/init.d/sshd` and it HAS `reload` (no restart);
+#   - openssh-server (opkg) already ships `Include /etc/ssh/sshd_config.d/*.conf`
+#     — we add it only if missing (a base/dropbear config), validated;
+#   - `/etc/ssh/auth_principals/` does not exist by default (created here);
+#   - openssl/curl are NOT on the gateway — the TOTP encryption + POST run on the
+#     controller (delegate_to: localhost).
+#
+# Required vars (from the Kestra flow / extra-vars):
+#   ssh_ca_endpoint   e.g. http://kong.supabase-app.svc.cluster.local:8000/functions/v1/ssh-ca
+#   supabase_anon_key anon JWT for the Kong route (task-105 / task-088)
+#   device_id         "<name>@<networkPrefix>" (selects the TOTP secret)
+#   enroll_totp       the current device TOTP code (the AES pass; decision-009)
+#   domain_label      the domain slug used in the .iotgw FQDN (for the principal)
+# Optional:
+#   host_cert_ttl_seconds (default 7776000 = 90 d, decision-028 §1)
+
+- name: "ssh_ca: detect the ssh service manager (OpenWRT vs Debian)"
+  ansible.builtin.stat:
+    path: /etc/init.d/sshd
+  register: owrt_sshd
+  tags: [ssh_ca]
+
+- name: "ssh_ca: set service facts"
+  ansible.builtin.set_fact:
+    ssh_reload_cmd: "{{ '/etc/init.d/sshd reload' if owrt_sshd.stat.exists else 'systemctl reload ssh' }}"
+    sshd_bin: "{{ '/usr/sbin/sshd' }}"
+  tags: [ssh_ca]
+
+- name: "ssh_ca: ensure an ecdsa-P256 host key exists (private half never leaves)"
+  ansible.builtin.command:
+    cmd: ssh-keygen -q -t ecdsa -b 256 -N "" -f /etc/ssh/ssh_host_ecdsa_key -C "{{ inventory_hostname }}"
+    creates: /etc/ssh/ssh_host_ecdsa_key
+  tags: [ssh_ca]
+
+- name: "ssh_ca: read the ecdsa host public key"
+  ansible.builtin.slurp:
+    src: /etc/ssh/ssh_host_ecdsa_key.pub
+  register: host_pub_b64
+  tags: [ssh_ca]
+
+- name: "ssh_ca: set host pubkey fact"
+  ansible.builtin.set_fact:
+    host_pubkey: "{{ host_pub_b64.content | b64decode | trim }}"
+  tags: [ssh_ca]
+
+# ── enroll via the ssh-ca edge function, encrypting on the CONTROLLER ────────
+- name: "ssh_ca: build + AES-encrypt the enrollment request (controller-side)"
+  delegate_to: localhost
+  vars:
+    enroll_body: '{"device_id":"{{ device_id }}","action":"enroll","host_pubkey":"{{ host_pubkey }}"}'
+  ansible.builtin.shell:
+    cmd: >
+      printf '%s' {{ enroll_body | quote }} |
+      openssl enc -aes-256-cbc -pbkdf2 -iter 300000 -salt -pass pass:{{ enroll_totp | quote }} |
+      base64 -w0
+  register: enroll_cipher_b64
+  changed_when: false
+  no_log: true
+  tags: [ssh_ca]
+
+- name: "ssh_ca: POST the encrypted enrollment to the ssh-ca edge function (controller-side)"
+  delegate_to: localhost
+  ansible.builtin.uri:
+    url: "{{ ssh_ca_endpoint }}?device_id={{ device_id | urlencode }}"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ supabase_anon_key }}"
+      Content-Type: application/octet-stream
+    body: "{{ enroll_cipher_b64.stdout | b64decode }}"
+    body_format: raw
+    status_code: [200, 201]
+    return_content: true
+  register: enroll_resp
+  no_log: true
+  tags: [ssh_ca]
+
+- name: "ssh_ca: parse the enrollment response"
+  ansible.builtin.set_fact:
+    enroll: "{{ enroll_resp.content | from_json }}"
+  tags: [ssh_ca]
+
+- name: "ssh_ca: fail closed if the response is missing trust material"
+  ansible.builtin.assert:
+    that:
+      - enroll.host_cert is defined and enroll.host_cert | length > 0
+      - enroll.user_ca is defined and enroll.user_ca | length > 0
+    fail_msg: "ssh-ca edge function returned no host_cert/user_ca — refusing to touch sshd"
+  tags: [ssh_ca]
+
+# ── install the trust material on the gateway ───────────────────────────────
+- name: "ssh_ca: ensure /etc/ssh/auth_principals exists (absent on OpenWRT)"
+  ansible.builtin.file:
+    path: /etc/ssh/auth_principals
+    state: directory
+    mode: "0755"
+  tags: [ssh_ca]
+
+- name: "ssh_ca: install the host certificate"
+  ansible.builtin.copy:
+    content: "{{ enroll.host_cert }}"
+    dest: /etc/ssh/ssh_host_ecdsa_key-cert.pub
+    mode: "0644"
+  tags: [ssh_ca]
+
+- name: "ssh_ca: install the User CA trust anchor"
+  ansible.builtin.copy:
+    content: "{{ enroll.user_ca }}"
+    dest: /etc/ssh/ssh-user-ca.pub
+    mode: "0444"
+  tags: [ssh_ca]
+
+- name: "ssh_ca: install auth_principals/root (iotgw-admin, iotgw-ops)"
+  ansible.builtin.copy:
+    content: |
+      iotgw-admin
+      iotgw-ops
+    dest: /etc/ssh/auth_principals/root
+    mode: "0644"
+  tags: [ssh_ca]
+
+- name: "ssh_ca: ensure an empty RevokedKeys file (sshd won't start if it is missing)"
+  ansible.builtin.copy:
+    content: ""
+    dest: /etc/ssh/revoked_keys
+    force: false
+    mode: "0600"
+  tags: [ssh_ca]
+
+- name: "ssh_ca: 50- break-glass drop-in (sorts before 60- so raw keys keep working)"
+  ansible.builtin.copy:
+    content: |
+      # iotgw-ng break-glass (decision-028 §11). Managed by ssh_ca — do not edit.
+      AuthorizedKeysFile .ssh/authorized_keys
+    dest: /etc/ssh/sshd_config.d/50-iotgw-authorized-keys.conf
+    mode: "0644"
+  tags: [ssh_ca]
+
+- name: "ssh_ca: 60- SSH CA drop-in (host cert + user CA trust)"
+  ansible.builtin.copy:
+    content: |
+      # iotgw-ng SSH CA (decision-024/026). Managed by ssh_ca — do not edit.
+      HostKey /etc/ssh/ssh_host_ecdsa_key
+      HostCertificate /etc/ssh/ssh_host_ecdsa_key-cert.pub
+      TrustedUserCAKeys /etc/ssh/ssh-user-ca.pub
+      AuthorizedPrincipalsFile /etc/ssh/auth_principals/%u
+      RevokedKeys /etc/ssh/revoked_keys
+    dest: /etc/ssh/sshd_config.d/60-iotgw-ssh-ca.conf
+    mode: "0644"
+  register: ca_dropin
+  tags: [ssh_ca]
+
+# OpenWRT's openssh-server ships the Include; a base/dropbear sshd_config may not.
+- name: "ssh_ca: ensure sshd_config includes the drop-in directory"
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    line: "Include /etc/ssh/sshd_config.d/*.conf"
+    insertbefore: BOF
+    validate: "/usr/sbin/sshd -t -f %s"
+  tags: [ssh_ca]
+
+# ── validate, then reload — never restart; fail-safe on a bad config ────────
+- name: "ssh_ca: validate the resulting sshd configuration"
+  ansible.builtin.command:
+    cmd: "{{ sshd_bin }} -t"
+  register: sshd_check
+  changed_when: false
+  failed_when: false
+  tags: [ssh_ca]
+
+- name: "ssh_ca: ROLLBACK — remove the drop-ins if sshd -t failed"
+  when: sshd_check.rc != 0
+  block:
+    - name: "ssh_ca: remove the iotgw drop-ins"
+      ansible.builtin.file:
+        path: "/etc/ssh/sshd_config.d/{{ item }}"
+        state: absent
+      loop:
+        - 50-iotgw-authorized-keys.conf
+        - 60-iotgw-ssh-ca.conf
+    - name: "ssh_ca: fail loudly (running sshd config left untouched)"
+      ansible.builtin.fail:
+        msg: "sshd -t rejected the enrollment config; drop-ins removed, sshd NOT reloaded. stderr: {{ sshd_check.stderr }}"
+  tags: [ssh_ca]
+
+- name: "ssh_ca: reload sshd (never restart) to pick up the drop-ins"
+  ansible.builtin.command:
+    cmd: "{{ ssh_reload_cmd }}"
+  when: sshd_check.rc == 0
+  changed_when: true
+  tags: [ssh_ca]
+
+# ── assert BOTH auth paths are live ─────────────────────────────────────────
+- name: "ssh_ca: read the effective sshd config"
+  ansible.builtin.command:
+    cmd: "{{ sshd_bin }} -T"
+  register: sshd_effective
+  changed_when: false
+  tags: [ssh_ca]
+
+- name: "ssh_ca: assert certificate auth AND break-glass are both live"
+  ansible.builtin.assert:
+    that:
+      - "'trustedusercakeys /etc/ssh/ssh-user-ca.pub' in sshd_effective.stdout"
+      - "'hostcertificate /etc/ssh/ssh_host_ecdsa_key-cert.pub' in sshd_effective.stdout"
+      - "'authorizedkeysfile .ssh/authorized_keys' in sshd_effective.stdout"
+    fail_msg: "enrollment did not take effect in the running sshd config"
+    success_msg: "gateway now accepts iotgw-admin certificates and keeps break-glass raw-key access"
+  tags: [ssh_ca]
