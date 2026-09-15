@@ -62,40 +62,40 @@
     host_pubkey: "{{ host_pub_b64.content | b64decode | trim }}"
   tags: [ssh_ca]
 
-# ── enroll via the ssh-ca edge function, encrypting on the CONTROLLER ────────
-- name: "ssh_ca: build + AES-encrypt the enrollment request (controller-side)"
+# ── enroll via the ssh-ca edge function (encrypt request + decrypt reply on the
+#    CONTROLLER — the edge function speaks the OpenSSL AES envelope both ways;
+#    the whole exchange is confidential to the device TOTP even over the anon key)
+- name: "ssh_ca: write the enrollment request JSON (controller-side, transient)"
   delegate_to: localhost
   vars:
     enroll_body: '{"device_id":"{{ device_id }}","action":"enroll","host_pubkey":"{{ host_pubkey }}"}'
-  ansible.builtin.shell:
-    cmd: >
-      printf '%s' {{ enroll_body | quote }} |
-      openssl enc -aes-256-cbc -pbkdf2 -iter 300000 -salt -pass pass:{{ enroll_totp | quote }} |
-      base64 -w0
-  register: enroll_cipher_b64
+  ansible.builtin.copy:
+    content: "{{ enroll_body }}"
+    dest: "/tmp/ssh_ca_req.{{ inventory_hostname }}.json"
+    mode: "0600"
   changed_when: false
-  no_log: true
   tags: [ssh_ca]
 
-- name: "ssh_ca: POST the encrypted enrollment to the ssh-ca edge function (controller-side)"
+- name: "ssh_ca: encrypt → POST → decrypt the enrollment (controller-side)"
   delegate_to: localhost
-  ansible.builtin.uri:
-    url: "{{ ssh_ca_endpoint }}?device_id={{ device_id | urlencode }}"
-    method: POST
-    headers:
-      Authorization: "Bearer {{ supabase_anon_key }}"
-      Content-Type: application/octet-stream
-    body: "{{ enroll_cipher_b64.stdout | b64decode }}"
-    body_format: raw
-    status_code: [200, 201]
-    return_content: true
-  register: enroll_resp
+  ansible.builtin.shell:
+    cmd: |
+      set -euo pipefail
+      req=/tmp/ssh_ca_req.{{ inventory_hostname }}.json
+      openssl enc -aes-256-cbc -pbkdf2 -iter 300000 -salt -pass pass:{{ enroll_totp | quote }} -in "$req" \
+        | curl -fsS -m 30 -X POST "{{ ssh_ca_endpoint }}?device_id={{ device_id | urlencode }}" \
+            {% if supabase_anon_key is defined and supabase_anon_key %}-H "Authorization: Bearer {{ supabase_anon_key }}" {% endif %}-H "Content-Type: application/octet-stream" --data-binary @- \
+        | openssl enc -d -aes-256-cbc -pbkdf2 -iter 300000 -pass pass:{{ enroll_totp | quote }}
+      rm -f "$req"
+    executable: /bin/bash
+  register: enroll_raw
   no_log: true
+  changed_when: false
   tags: [ssh_ca]
 
-- name: "ssh_ca: parse the enrollment response"
+- name: "ssh_ca: parse the (decrypted) enrollment response"
   ansible.builtin.set_fact:
-    enroll: "{{ enroll_resp.content | from_json }}"
+    enroll: "{{ enroll_raw.stdout | from_json }}"
   tags: [ssh_ca]
 
 - name: "ssh_ca: fail closed if the response is missing trust material"
