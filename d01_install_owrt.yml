@@ -96,10 +96,14 @@
         src: setup_vpn.sh
         dest: /tmp/setup_vpn.sh
         mode: "0755"
+      tags: [vpn]
 
+    # setup_vpn.sh parses an existing /etc/wireguard/wg0.conf on the live host;
+    # skip with `--skip-tags vpn` for a bare canary/SSH-CA test that has none.
     - name: Set up VPN
       ansible.builtin.command:
-        cmd: /tmp/setup_vpn.sh 
+        cmd: /tmp/setup_vpn.sh
+      tags: [vpn]
 
     - name: Copy script for unsetting up chroot
       ansible.builtin.copy:
