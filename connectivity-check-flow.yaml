@@ -64,7 +64,12 @@ tasks:
           # keys/known_hosts. Pin the connect name to the certified FQDN with
           # HostKeyAlias so verification cannot silently fall back to TOFU;
           # GlobalKnownHostsFile=/dev/null isolates it from any system file.
-          ansible_ssh_common_args: '-o StrictHostKeyChecking=yes -o UserKnownHostsFile=keys/known_hosts -o GlobalKnownHostsFile=/dev/null -o HostKeyAlias={{ inputs.cert_fqdn }}'
+          # HostKeyAlgorithms forces the ECDSA-P256 host CERTIFICATE (our enrollment
+          # always signs the ecdsa host key, decision-024). Without it OpenSSH may
+          # negotiate a plain host key the known_hosts has no entry for → verification
+          # fails; with it, a gateway that presents no cert fails to negotiate at all
+          # (which is the correct "cert absent → fail" behaviour, task-093 AC#1).
+          ansible_ssh_common_args: '-o StrictHostKeyChecking=yes -o UserKnownHostsFile=keys/known_hosts -o GlobalKnownHostsFile=/dev/null -o HostKeyAlias={{ inputs.cert_fqdn }} -o HostKeyAlgorithms=ecdsa-sha2-nistp256-cert-v01@openssh.com'
       {% else %}
           # No cert material supplied (the scheduled cron has no device identity)
           # → Trust-On-First-Use. A per-device run passes cert_fqdn + pki_host_ca_id
@@ -151,7 +156,12 @@ tasks:
               if [ -n "$PKI_HOST_CA_ID" ] && [ -n "$CERT_FQDN" ]; then
                 echo "Fetching domain Host CA $PKI_HOST_CA_ID from $PKI_BASE_URL to verify the gateway host certificate..."
                 mkdir -p keys
-                ca_pub="$(curl -fsS "$PKI_BASE_URL/ssh/cas/$PKI_HOST_CA_ID/ca.pub")"
+                # cytopia/ansible:latest-tools ships wget but NOT curl — try both.
+                if command -v curl >/dev/null 2>&1; then
+                  ca_pub="$(curl -fsS "$PKI_BASE_URL/ssh/cas/$PKI_HOST_CA_ID/ca.pub")"
+                else
+                  ca_pub="$(wget -qO- "$PKI_BASE_URL/ssh/cas/$PKI_HOST_CA_ID/ca.pub")"
+                fi
                 case "$ca_pub" in
                   ssh-*|ecdsa-*) : ;;
                   *) echo "pki returned no usable Host CA key for $PKI_HOST_CA_ID" >&2; exit 1 ;;

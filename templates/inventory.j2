@@ -9,7 +9,12 @@ all:
     # CA via an @cert-authority known_hosts file and pin the connect name to the
     # certified FQDN with HostKeyAlias, so verification cannot silently fall back
     # to TOFU. GlobalKnownHostsFile=/dev/null isolates it from any system file.
-    ansible_ssh_common_args: '-o StrictHostKeyChecking=yes -o UserKnownHostsFile={{ host_ca_known_hosts }} -o GlobalKnownHostsFile=/dev/null -o HostKeyAlias={{ cert_fqdn }}'
+    # HostKeyAlgorithms forces the ECDSA-P256 host CERTIFICATE (enrollment always
+    # signs the ecdsa host key). Without it OpenSSH may negotiate a plain host key
+    # the @cert-authority known_hosts has no entry for and verification fails; with
+    # it, a gateway presenting no cert fails to negotiate — the correct "cert absent
+    # → fail" posture (task-093).
+    ansible_ssh_common_args: '-o StrictHostKeyChecking=yes -o UserKnownHostsFile={{ host_ca_known_hosts }} -o GlobalKnownHostsFile=/dev/null -o HostKeyAlias={{ cert_fqdn }} -o HostKeyAlgorithms=ecdsa-sha2-nistp256-cert-v01@openssh.com'
 {% else %}
     # No host-cert material supplied → Trust-On-First-Use. This is correct ONLY
     # for the live-boot / pre-enrollment phase (decision-028 §5, still open); a
