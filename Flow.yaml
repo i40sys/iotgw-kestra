@@ -26,6 +26,19 @@ tasks:
           ansible_user: 'root'
           ansible_python_interpreter: /usr/bin/python3
           ansible_ssh_private_key_file: "keys/id_rsa"
+          # HOST-VERIFICATION POSTURE (task-093):
+          # - Gateway hop (first -o pair): TOFU today. Provisioning is where the
+          #   gateway ENROLLS (ssh_ca), so its first connection is pre-certificate.
+          #   Once split into pre/post-enroll steps, the POST-enroll steps should
+          #   render an @cert-authority known_hosts and switch to
+          #   'StrictHostKeyChecking=yes -o UserKnownHostsFile=<kh>
+          #   -o GlobalKnownHostsFile=/dev/null -o HostKeyAlias=<fqdn>'
+          #   (see templates/inventory.j2, and task-093 for the wiring).
+          # - Bastion hop (ProxyCommand): the jump host {{ kv('VPN_JUMP_HOST') }}
+          #   is NOT an iotgw-ng gateway and holds NO certificate from our Host CA,
+          #   so it cannot be verified this way. ACCEPTED DECISION (task-093 AC#3):
+          #   keep TOFU for the bastion, documented here; revisit by pinning its
+          #   host key or issuing it a cert if the jump host ever becomes ours.
           ansible_ssh_common_args: >-
             -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
             -o ProxyCommand="ssh -i keys/id_rsa -o IdentitiesOnly=yes

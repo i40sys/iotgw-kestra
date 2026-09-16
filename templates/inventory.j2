@@ -4,7 +4,19 @@ all:
       hosts:
         {{ iotgw_ip }}:
   vars:
+{% if host_ca_known_hosts is defined and cert_fqdn is defined %}
+    # SSH CA host verification (decision-024 §6, task-093): trust the zone's Host
+    # CA via an @cert-authority known_hosts file and pin the connect name to the
+    # certified FQDN with HostKeyAlias, so verification cannot silently fall back
+    # to TOFU. GlobalKnownHostsFile=/dev/null isolates it from any system file.
+    ansible_ssh_common_args: '-o StrictHostKeyChecking=yes -o UserKnownHostsFile={{ host_ca_known_hosts }} -o GlobalKnownHostsFile=/dev/null -o HostKeyAlias={{ cert_fqdn }}'
+{% else %}
+    # No host-cert material supplied → Trust-On-First-Use. This is correct ONLY
+    # for the live-boot / pre-enrollment phase (decision-028 §5, still open); a
+    # provisioned+enrolled gateway must be given host_ca_known_hosts + cert_fqdn
+    # so the branch above runs and verifies its host certificate (task-093).
     ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+{% endif %}
     ansible_user: 'root'
     #ansible_ssh_pass: ''
     #ansible_port: 5555
