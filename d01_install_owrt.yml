@@ -57,6 +57,26 @@
       ansible.builtin.command:
         cmd: /tmp/grub_install.sh "{{ target_disk }}"
 
+    # This firmware (EDK II) boots PXE -> EFI Shell with no direct NVMe boot
+    # entry, and OpenWrt exposes no EFI runtime vars (efibootmgr can't add one),
+    # so the EFI Shell needs FS0:\startup.nsh at the ESP root to auto-chainload
+    # GRUB. Baking it here makes "Boot from local hdd" survive every re-image
+    # (a Clonezilla/OS restore rewrites the ESP and wiped the manual copy).
+    - name: Persist the EFI-Shell local-boot helper (startup.nsh) on the ESP
+      ansible.builtin.shell: |
+        set -e
+        TD="{{ target_disk }}"
+        case "$TD" in *[0-9]) ESP="${TD}p1";; *) ESP="${TD}1";; esac
+        m=/mnt/esp_startupnsh
+        mkdir -p "$m"
+        mountpoint -q "$m" || mount "$ESP" "$m"
+        printf '%s\n' '@echo -off' 'echo Booting local OpenWrt from NVMe...' 'FS0:' '\efi\boot\bootx64.efi' > "$m/startup.nsh"
+        sync
+        umount "$m"
+        rmdir "$m" 2>/dev/null || true
+      args:
+        executable: /bin/bash
+
     - name: Copy script for setting /etc/config/fstab
       ansible.builtin.copy:
         src: setup_fstab.sh
