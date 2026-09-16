@@ -1,0 +1,31 @@
+id: sync-namespace-files
+namespace: iotgw-ng
+
+# Mirrors this repository's playbooks/templates/scripts into the iotgw-ng
+# namespace FILE store (Kestra 1.2+ indexes namespace files in its DB, not the
+# filesystem), so the PodCreate flows' DownloadFiles steps can stage them.
+#
+# github.com/i40sys/iotgw-kestra is PUBLIC, so SyncNamespaceFiles clones WITHOUT
+# credentials — the former `{{ kv('GITHUB_ACCESS_TOKEN') }}` dependency is dropped
+# (decision to keep the public repo secret-free). This flow definition is now
+# committed to the repo itself: it used to live ONLY in the Kestra DB and was lost
+# when the kind cluster was recreated (2026-09-16), leaving the namespace un-seedable.
+#
+# NOTE: this syncs FILES only, not flow DEFINITIONS. The flows (provisioning,
+# install, connectivity-check, and this one) are registered via the Kestra API /
+# bootstrap; they are all tracked in this repo (*-flow.yaml, Flow.yaml, this file).
+
+triggers:
+  - id: daily_sync
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "0 6 * * *"
+
+tasks:
+  - id: sync_from_git
+    type: io.kestra.plugin.git.SyncNamespaceFiles
+    url: https://github.com/i40sys/iotgw-kestra
+    branch: main
+    namespace: iotgw-ng
+    gitDirectory: .
+    delete: true
+    dryRun: false
