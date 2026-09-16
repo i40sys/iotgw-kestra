@@ -20,6 +20,30 @@ inputs:
       private key from Cosmian KMS into keys/id_rsa (task-069). Empty for
       the scheduled cron run (which has no device identity).
     defaults: ""
+  - id: cert_fqdn
+    type: STRING
+    description: >-
+      The gateway's certified host FQDN (the device row's ssh_host_fqdn,
+      recorded at enrollment — a principal on its host certificate, e.g.
+      <name>-<id8>.<network>.<domain>.iotgw). When set together with
+      pki_host_ca_id, the flow verifies the host certificate instead of TOFU
+      (task-093): the pod builds an @cert-authority known_hosts and the
+      inventory pins the connect name to this FQDN with HostKeyAlias. Empty
+      for the scheduled cron run (no device identity → TOFU).
+    defaults: ""
+  - id: pki_host_ca_id
+    type: STRING
+    description: >-
+      The domain's Host CA id (domains.pki_host_ca_id). The pod fetches the
+      CA public key from the PUBLIC, id-addressed pki route
+      $PKI_BASE_URL/ssh/cas/<id>/ca.pub (no auth — same source as
+      scripts/ssh-ca/trust.sh) to build the @cert-authority line. Empty →
+      host verification stays TOFU (task-093).
+    defaults: ""
+  - id: pki_base_url
+    type: STRING
+    description: "Base URL of pki-manager's public routes (Host CA fetch, task-093)."
+    defaults: "https://pki.joor.net"
 
 tasks:
   - id: create_inventory_file
@@ -32,18 +56,21 @@ tasks:
           ansible_user: 'root'
           ansible_python_interpreter: /usr/bin/python3
           ansible_ssh_private_key_file: "keys/id_rsa"
-          # TASK-093 TARGET: this flow runs against a PROVISIONED+ENROLLED gateway,
-          # so it SHOULD verify the host certificate rather than TOFU. To do so,
-          # add a step that fetches the device's domain Host CA (public route
-          # pki .../ssh/cas/<pki_host_ca_id>/ca.pub) + the certified FQDN, writes
-          #   @cert-authority *.<domain>.iotgw <hostCa>   -> known_hosts
-          # and switch the line below to
-          #   '-o StrictHostKeyChecking=yes -o UserKnownHostsFile=<known_hosts>
-          #    -o GlobalKnownHostsFile=/dev/null -o HostKeyAlias=<fqdn>'
-          # (mechanism proven in task-093; see templates/inventory.j2). Left as
-          # TOFU here until that wiring is added AND validated by a Kestra run
-          # against an enrolled gateway — do not flip it blind against the fleet.
+      {% if inputs.cert_fqdn != '' and inputs.pki_host_ca_id != '' %}
+          # TASK-093: this flow runs against a PROVISIONED+ENROLLED gateway, so it
+          # VERIFIES the host certificate instead of TOFU. The pod fetched the
+          # domain Host CA (public route /ssh/cas/{{ inputs.pki_host_ca_id }}/ca.pub)
+          # and wrote  '@cert-authority {{ inputs.cert_fqdn }} <hostCa>'  to
+          # keys/known_hosts. Pin the connect name to the certified FQDN with
+          # HostKeyAlias so verification cannot silently fall back to TOFU;
+          # GlobalKnownHostsFile=/dev/null isolates it from any system file.
+          ansible_ssh_common_args: '-o StrictHostKeyChecking=yes -o UserKnownHostsFile=keys/known_hosts -o GlobalKnownHostsFile=/dev/null -o HostKeyAlias={{ inputs.cert_fqdn }}'
+      {% else %}
+          # No cert material supplied (the scheduled cron has no device identity)
+          # → Trust-On-First-Use. A per-device run passes cert_fqdn + pki_host_ca_id
+          # so the branch above runs and verifies the host certificate (task-093).
           ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+      {% endif %}
 
   - id: stage_namespace_files
     # connectivity_check.yml is self-contained (an ansible.builtin.ping); the
@@ -96,6 +123,14 @@ tasks:
                 secretKeyRef:
                   name: kms-auth
                   key: KMS_AUTH_TOKEN
+            # task-093: non-secret host-verification context (public pki route +
+            # certified FQDN). Both empty on the scheduled cron run → TOFU.
+            - name: PKI_HOST_CA_ID
+              value: "{{ inputs.pki_host_ca_id }}"
+            - name: CERT_FQDN
+              value: "{{ inputs.cert_fqdn }}"
+            - name: PKI_BASE_URL
+              value: "{{ inputs.pki_base_url }}"
           command:
             - /bin/bash
             - -c
@@ -108,5 +143,24 @@ tasks:
                 echo "No ssh_key_id provided (scheduled run) — skipping KMS fetch."
               fi
               chmod 600 keys/id_rsa
+              # task-093: build the @cert-authority known_hosts so the gateway's
+              # HOST certificate is verified (no TOFU). The Host CA public key comes
+              # from the PUBLIC, id-addressed pki route (no auth, same as trust.sh);
+              # the pattern is the exact certified FQDN, which is a principal on the
+              # host cert, and the inventory pins HostKeyAlias to it.
+              if [ -n "$PKI_HOST_CA_ID" ] && [ -n "$CERT_FQDN" ]; then
+                echo "Fetching domain Host CA $PKI_HOST_CA_ID from $PKI_BASE_URL to verify the gateway host certificate..."
+                mkdir -p keys
+                ca_pub="$(curl -fsS "$PKI_BASE_URL/ssh/cas/$PKI_HOST_CA_ID/ca.pub")"
+                case "$ca_pub" in
+                  ssh-*|ecdsa-*) : ;;
+                  *) echo "pki returned no usable Host CA key for $PKI_HOST_CA_ID" >&2; exit 1 ;;
+                esac
+                printf '@cert-authority %s %s\n' "$CERT_FQDN" "$ca_pub" > keys/known_hosts
+                chmod 600 keys/known_hosts
+                echo "known_hosts written: @cert-authority $CERT_FQDN <hostCa>"
+              else
+                echo "No pki_host_ca_id/cert_fqdn — host verification stays TOFU (scheduled run)."
+              fi
               ansible-playbook -i inventory.yml connectivity_check.yml
           workingDir: "{{ workingDir }}"
