@@ -23,6 +23,11 @@ tasks:
           ansible_user: 'root'
           ansible_python_interpreter: /usr/bin/python3
           ansible_ssh_private_key_file: "keys/id_rsa"
+          # TOFU IS INTENTIONAL HERE (task-093 AC#4): this flow installs the OS
+          # onto a LIVE-booted machine that has no host certificate yet — the
+          # live-boot phase keeps Trust-On-First-Use until decision-028 §5 is
+          # resolved. Do NOT switch this to cert verification; there is nothing
+          # to verify against until after enrollment (Flow.yaml/ssh_ca).
           ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
 
   - id: stage_namespace_files

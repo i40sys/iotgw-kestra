@@ -5,6 +5,10 @@
     target_ip: "0.0.0.0"
   tasks:
     - name: Ping from VPN server
+      # task-093: the SSH hop here is to the VPN SERVER, not an iotgw-ng gateway —
+      # it holds no certificate from our Host CA, so TOFU is the accepted posture
+      # (same rationale as the bastion in Flow.yaml). Pin its host key or issue it
+      # a cert if it ever becomes ours.
       ansible.builtin.shell: |
         ssh -i keys/id_rsa \
             -o IdentitiesOnly=yes \

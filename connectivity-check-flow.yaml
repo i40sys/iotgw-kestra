@@ -32,6 +32,17 @@ tasks:
           ansible_user: 'root'
           ansible_python_interpreter: /usr/bin/python3
           ansible_ssh_private_key_file: "keys/id_rsa"
+          # TASK-093 TARGET: this flow runs against a PROVISIONED+ENROLLED gateway,
+          # so it SHOULD verify the host certificate rather than TOFU. To do so,
+          # add a step that fetches the device's domain Host CA (public route
+          # pki .../ssh/cas/<pki_host_ca_id>/ca.pub) + the certified FQDN, writes
+          #   @cert-authority *.<domain>.iotgw <hostCa>   -> known_hosts
+          # and switch the line below to
+          #   '-o StrictHostKeyChecking=yes -o UserKnownHostsFile=<known_hosts>
+          #    -o GlobalKnownHostsFile=/dev/null -o HostKeyAlias=<fqdn>'
+          # (mechanism proven in task-093; see templates/inventory.j2). Left as
+          # TOFU here until that wiring is added AND validated by a Kestra run
+          # against an enrolled gateway — do not flip it blind against the fleet.
           ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
 
   - id: stage_namespace_files
