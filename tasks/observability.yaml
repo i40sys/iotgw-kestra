@@ -6,10 +6,9 @@
   
 - name: "alloy: Clone alloy repository"
   ansible.builtin.git:
-    repo: 'git@github.com:example-org/alloy.git'
+    repo: 'https://x-access-token:{{ github_token }}@github.com/{{ github_org }}/alloy.git'
     dest: /opt/stacks/alloy
     accept_hostkey: true
-    key_file: /root/.ssh/id_rsa
   
 - name: "alloy: creating required directories"
   ansible.builtin.file:

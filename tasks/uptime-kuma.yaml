@@ -19,10 +19,9 @@
 
 - name: "uptime-kuma: clonning repos"
   ansible.builtin.git:
-    repo: 'git@github.com:example-org/iotgw_uptime-kuma.git'
+    repo: 'https://x-access-token:{{ github_token }}@github.com/{{ github_org }}/iotgw_uptime-kuma.git'
     dest: /opt/stacks/uptime
     accept_hostkey: true
-    key_file: /root/.ssh/id_rsa
 
 - name: "uptime-kuma: adding GIT pre-push hook"
   ansible.builtin.copy:

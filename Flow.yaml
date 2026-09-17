@@ -98,6 +98,23 @@ tasks:
                 secretKeyRef:
                   name: kms-auth
                   key: KMS_AUTH_TOKEN
+            # task-073 §7: GitHub App creds to mint a short-lived installation
+            # token for cloning the PRIVATE stack repos over HTTPS — no SSH deploy
+            # key on the gateway. From the `github-app` Secret (optional so the
+            # flow still starts before the App is provisioned). GITHUB_ORG is the
+            # non-secret repo owner (kept out of the public repo, hence a var).
+            - name: GH_APP_ID
+              valueFrom:
+                secretKeyRef: { name: github-app, key: GH_APP_ID, optional: true }
+            - name: GH_APP_INSTALLATION_ID
+              valueFrom:
+                secretKeyRef: { name: github-app, key: GH_APP_INSTALLATION_ID, optional: true }
+            - name: GH_APP_PRIVATE_KEY
+              valueFrom:
+                secretKeyRef: { name: github-app, key: GH_APP_PRIVATE_KEY, optional: true }
+            - name: GITHUB_ORG
+              valueFrom:
+                secretKeyRef: { name: github-app, key: GITHUB_ORG, optional: true }
           command:
             - /bin/bash
             - -c
@@ -120,9 +137,27 @@ tasks:
                 echo "No ssh_key_id provided — skipping KMS fetch."
               fi
               chmod 600 keys/id_rsa
+              # task-073 §7: mint a short-lived GitHub App installation token so the
+              # gateway clones the private stack repos over HTTPS — the App private
+              # key never leaves this runner and no SSH deploy key lands on the
+              # gateway. The token (github_token) + owner (github_org) are passed as
+              # extra-vars to the git tasks. RS256-sign the App JWT with openssl.
+              GH_TOKEN=""
+              if [ -n "${GH_APP_ID:-}" ] && [ -n "${GH_APP_PRIVATE_KEY:-}" ] && [ -n "${GH_APP_INSTALLATION_ID:-}" ]; then
+                now=$(date +%s)
+                b64u(){ openssl base64 -A | tr '+/' '-_' | tr -d '='; }
+                hdr=$(printf '{"alg":"RS256","typ":"JWT"}' | b64u)
+                pld=$(printf '{"iat":%d,"exp":%d,"iss":"%s"}' $((now-60)) $((now+540)) "$GH_APP_ID" | b64u)
+                sig=$(printf '%s.%s' "$hdr" "$pld" | openssl dgst -sha256 -sign <(printf '%s' "$GH_APP_PRIVATE_KEY") | b64u)
+                GH_TOKEN=$(wget -qO- --header="Authorization: Bearer ${hdr}.${pld}.${sig}" --header="Accept: application/vnd.github+json" --post-data='' "https://api.github.com/app/installations/${GH_APP_INSTALLATION_ID}/access_tokens" | python3 -c 'import sys,json;print(json.load(sys.stdin)["token"])')
+                echo "Minted GitHub App installation token (len ${#GH_TOKEN})."
+              else
+                echo "WARN: GitHub App creds unset — private stack git clones will fail (task-073 §7 setup pending)."
+              fi
+              GH_EXTRA="-e github_token=${GH_TOKEN} -e github_org=${GITHUB_ORG:-}"
               {% if inputs.json_data.__tags__ is defined and inputs.json_data.__tags__ | length > 0 %}
-              ansible-playbook -i inventory.yml i11_provisioning_iotgw.yaml -e '{{ inputs.json_data | json }}' --tags '{{ inputs.json_data.__tags__ | join(",") }}'
+              ansible-playbook -i inventory.yml i11_provisioning_iotgw.yaml -e '{{ inputs.json_data | json }}' $GH_EXTRA --tags '{{ inputs.json_data.__tags__ | join(",") }}'
               {% else %}
-              ansible-playbook -i inventory.yml i11_provisioning_iotgw.yaml -e '{{ inputs.json_data | json }}'
+              ansible-playbook -i inventory.yml i11_provisioning_iotgw.yaml -e '{{ inputs.json_data | json }}' $GH_EXTRA
               {% endif %}
           workingDir: "{{ workingDir }}"

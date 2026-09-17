@@ -46,10 +46,9 @@
   
 - name: "firewall, bridge-nft: Clone bridge-nft repository"
   ansible.builtin.git:
-    repo: 'git@github.com:example-org/iotgw_bridge-nft.git'
+    repo: 'https://x-access-token:{{ github_token }}@github.com/{{ github_org }}/iotgw_bridge-nft.git'
     dest: /opt/stacks/bridge-nft
     accept_hostkey: true
-    key_file: /root/.ssh/id_rsa
   
 - name: "firewall, bridge-nft: Add GIT pre-push hook"
   ansible.builtin.copy:

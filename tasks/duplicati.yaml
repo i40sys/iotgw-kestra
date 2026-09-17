@@ -19,10 +19,9 @@
 
 - name: "duplicati stack: clonning repos"
   ansible.builtin.git:
-    repo: 'git@github.com:example-org/iotgw_duplicati.git'
+    repo: 'https://x-access-token:{{ github_token }}@github.com/{{ github_org }}/iotgw_duplicati.git'
     dest: /opt/stacks/duplicati
     accept_hostkey: true
-    key_file: /root/.ssh/id_rsa
 
 - name: "duplicati: adding GIT pre-push hook"
   ansible.builtin.copy:
