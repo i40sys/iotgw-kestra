@@ -19,10 +19,9 @@
 
 - name: "telegraf: clonning repos"
   ansible.builtin.git:
-    repo: 'git@github.com:example-org/iotgw_telegraf.git'
+    repo: 'https://x-access-token:{{ github_token }}@github.com/{{ github_org }}/iotgw_telegraf.git'
     dest: /opt/stacks/telegraf
     accept_hostkey: true
-    key_file: /root/.ssh/id_rsa
 
 - name: "telegraf: adding GIT pre-push hook"
   ansible.builtin.copy:

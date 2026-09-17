@@ -19,10 +19,9 @@
 
 - name: "containers_exporter: clonning repos"
   ansible.builtin.git:
-    repo: 'git@github.com:example-org/iotgw_containers-exporter.git'
+    repo: 'https://x-access-token:{{ github_token }}@github.com/{{ github_org }}/iotgw_containers-exporter.git'
     dest: /opt/stacks/containers_exporter
     accept_hostkey: true
-    key_file: /root/.ssh/id_rsa
 
 - name: "containers_exporter: adding GIT pre-push hook"
   ansible.builtin.copy:

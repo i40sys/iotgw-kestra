@@ -19,10 +19,9 @@
 
 - name: "nodered: clonning repos"
   ansible.builtin.git:
-    repo: 'git@github.com:example-org/iotgw_nodered.git'
+    repo: 'https://x-access-token:{{ github_token }}@github.com/{{ github_org }}/iotgw_nodered.git'
     dest: /opt/stacks/nodered
     accept_hostkey: true
-    key_file: /root/.ssh/id_rsa
 
 - name: "nodered: adding GIT pre-push hook"
   ansible.builtin.copy:
@@ -93,10 +92,9 @@
 
 - name: "nodered: clonning repos"
   ansible.builtin.git:
-    repo: "git@github.com:example-org/flows.{{ iotgw_hostname }}.git"
+    repo: "https://x-access-token:{{ github_token }}@github.com/{{ github_org }}/flows.{{ iotgw_hostname }}.git"
     dest: "/opt/stacks/nodered/data/projects/flows.{{ iotgw_hostname }}"
     accept_hostkey: true
-    key_file: /root/.ssh/id_rsa
 
 - name: "nodered: Find all directories inside /opt/stacks/nodered/data"
   ansible.builtin.find:

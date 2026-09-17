@@ -19,10 +19,9 @@
 
 - name: "glpi-agent: clonning repos"
   ansible.builtin.git:
-    repo: 'git@github.com:example-org/iotgw_glpi-agent.git'
+    repo: 'https://x-access-token:{{ github_token }}@github.com/{{ github_org }}/iotgw_glpi-agent.git'
     dest: /opt/stacks/glpi
     accept_hostkey: true
-    key_file: /root/.ssh/id_rsa
 
 
 - name: "glpi-agent: adding GIT pre-push hook"

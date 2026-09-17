@@ -19,10 +19,9 @@
 
 - name: "mosquitto: clonning repos"
   ansible.builtin.git:
-    repo: 'git@github.com:example-org/iotgw_mosquitto.git'
+    repo: 'https://x-access-token:{{ github_token }}@github.com/{{ github_org }}/iotgw_mosquitto.git'
     dest: /opt/stacks/mosquitto
     accept_hostkey: true
-    key_file: /root/.ssh/id_rsa
 
 
 - name: "mosquitto: adding GIT pre-push hook"

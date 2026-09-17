@@ -19,10 +19,9 @@
   
 - name: "plc_sniffer: clonning repos"
   ansible.builtin.git:
-    repo: 'git@github.com:example-org/iotgw_plc_sniffer.git'
+    repo: 'https://x-access-token:{{ github_token }}@github.com/{{ github_org }}/iotgw_plc_sniffer.git'
     dest: /opt/stacks/plc_sniffer
     accept_hostkey: true
-    key_file: /root/.ssh/id_rsa
 
 - name: "plc_sniffer: Fetch env.j2 template"
   ansible.builtin.fetch:

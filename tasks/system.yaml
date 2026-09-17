@@ -73,6 +73,11 @@
       /etc/init.d/sshd reload
       /etc/init.d/sshd restart
 
+# The shared /root/.ssh/id_rsa is NO LONGER used to clone the private stack repos
+# (task-073 §7: the git tasks now clone over HTTPS with a short-lived GitHub App
+# token minted in the runner). This deployment is therefore OPTIONAL break-glass
+# only, and stays gated OFF by default (`deploy_shared_ssh_key`). decision-023 R1
+# (a load-bearing shared key) is removed by that change.
 - name: "system: setting SSH pub key"
   ansible.builtin.copy:
     src: credentials/id_rsa.pub

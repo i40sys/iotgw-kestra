@@ -20,10 +20,9 @@
 
 - name: "VSCode: Clone VSCode repository"
   ansible.builtin.git:
-    repo: 'git@github.com:example-org/iotgw_vscode.git'
+    repo: 'https://x-access-token:{{ github_token }}@github.com/{{ github_org }}/iotgw_vscode.git'
     dest: /opt/stacks/vscode
     accept_hostkey: true
-    key_file: /root/.ssh/id_rsa
 
 - name: "VSCode: Add GIT pre-push hook"
   ansible.builtin.copy:

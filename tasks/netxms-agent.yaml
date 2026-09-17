@@ -19,10 +19,9 @@
 
 - name: "netxms: Clone repository"
   ansible.builtin.git:
-    repo: 'git@github.com:example-org/iotgw_netxms.git'
+    repo: 'https://x-access-token:{{ github_token }}@github.com/{{ github_org }}/iotgw_netxms.git'
     dest: /opt/stacks/netxms
     accept_hostkey: true
-    key_file: /root/.ssh/id_rsa
 
 - name: "netxms: Adding GIT pre-push hook"
   ansible.builtin.copy:
