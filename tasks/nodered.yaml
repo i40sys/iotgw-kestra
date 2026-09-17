@@ -1,4 +1,3 @@
----
 - name: "nodered: Check if Docker stack is running"
   community.docker.docker_compose_v2:
     project_src: /opt/stacks/nodered
@@ -17,20 +16,11 @@
     path: /opt/stacks/nodered
     state: absent
 
-- name: "nodered: clonning repos"
-  ansible.builtin.git:
-    repo: 'https://x-access-token:{{ github_token }}@github.com/{{ github_org }}/iotgw_nodered.git'
-    dest: /opt/stacks/nodered
-    accept_hostkey: true
-
-- name: "nodered: adding GIT pre-push hook"
+- name: 'nodered: deploy stack files (task-073 §7: vendored in files/stacks/, no git clone)'
   ansible.builtin.copy:
-    src: pre-push
-    dest: /opt/stacks/nodered/.git/hooks/pre-push
-    owner: root
-    group: root
-    mode: '0755'
-
+    src: stacks/nodered/
+    dest: /opt/stacks/nodered/
+    mode: preserve
 - name: "nodered: setting up data directory"
   ansible.builtin.file:
     path: /opt/stacks/nodered/data
@@ -92,10 +82,11 @@
 
 - name: "nodered: clonning repos"
   ansible.builtin.git:
-    repo: "https://x-access-token:{{ github_token }}@github.com/{{ github_org }}/flows.{{ iotgw_hostname }}.git"
+    repo: "git@github.com:{{ github_org }}/flows.{{ iotgw_hostname }}.git"
     dest: "/opt/stacks/nodered/data/projects/flows.{{ iotgw_hostname }}"
     accept_hostkey: true
 
+    key_file: /root/.ssh/id_rsa
 - name: "nodered: Find all directories inside /opt/stacks/nodered/data"
   ansible.builtin.find:
     paths: /opt/stacks/nodered/data

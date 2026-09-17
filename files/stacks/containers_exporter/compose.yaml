@@ -1,0 +1,26 @@
+name: containers_exporter
+
+x-logging:
+  &default-logging
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "1"
+
+services:
+  srv:
+    image: ghcr.io/oriolrius/docker_container_exporter:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - "127.0.0.1:${PORT}:8118"
+    privileged: true
+    restart: unless-stopped
+    logging: *default-logging
+    labels:
+      kuma.__container: '{"name": "containers_exporter"}'

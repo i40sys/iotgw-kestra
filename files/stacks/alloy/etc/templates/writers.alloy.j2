@@ -1,0 +1,29 @@
+prometheus.remote_write "mimir_writer" {
+	endpoint {
+    url = "{{ prometheus_url }}"
+    oauth2 {
+      client_id = "{{ prometheus_oauth2_client_id }}"
+      client_secret = "{{ prometheus_oauth2_client_secret }}"
+      token_url = "{{ prometheus_oauth2_token_url }}"
+    }
+	}
+}
+
+loki.write "loki_writer" {
+	endpoint {
+		url = "{{ loki_url }}"
+		min_backoff_period = "1s"
+		max_backoff_period = "1m"
+		max_backoff_retries = 10
+		oauth2 {
+		client_id = "{{ loki_oauth2_client_id }}"
+		client_secret = "{{ loki_oauth2_client_secret }}"
+		token_url = "{{ loki_oauth2_token_url }}"
+		}
+	}
+	external_labels = {}
+	wal {
+		enabled = true
+		max_segment_age = "1h"
+	}
+}

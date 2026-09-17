@@ -1,0 +1,49 @@
+name: uptime
+
+x-logging:
+  &default-logging
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "1"
+
+services:
+  kuma:
+    image: louislam/uptime-kuma:1
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - /opt/stacks/uptime/data:/app/data
+      - /var/run/docker.sock:/var/run/docker.sock
+    env_file:
+      - .env
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:3003" ]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging: *default-logging
+  autokuma:
+    image: ghcr.io/bigboot/autokuma:latest
+    restart: unless-stopped
+    env_file:
+      - .env
+    labels:
+      kuma.docker_containers.group.name: 'docker_containers'
+      kuma.local_services.group.name: 'local_services'
+      kuma.__local_services: ""
+      kuma.factory_services.group.name: 'factory_services'
+      kuma.__factory_services: ""
+      kuma.cloud_services.group.name: 'cloud_services'
+      kuma.__cloud_services: ""
+      kuma.internet_services.group.name: 'internet_services'
+      kuma.__internet_services: ""
+    depends_on:
+      kuma:
+        condition: service_healthy
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./data:/data
+    network_mode: host
+    logging: *default-logging

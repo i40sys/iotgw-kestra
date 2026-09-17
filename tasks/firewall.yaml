@@ -1,4 +1,3 @@
----
 - name: "firewall: configuration"
   ansible.builtin.template:
     src: templates/firewall.j2
@@ -6,7 +5,6 @@
     owner: root
     group: root
     mode: '0644'
-  
 - name: "firewall: disable bridge firewall filters"
   ansible.builtin.template:
     src: templates/12-br-netfilter-ip.conf.j2
@@ -14,25 +12,24 @@
     owner: root
     group: root
     mode: '0644'
-  
 - name: "firewall: Add Internet allowed IPs"
   ansible.builtin.shell: |
     IP_SET_ID=$(uci show firewall | grep \@ipset|grep \'AllowedInternet\' | cut -f 2 -d "[" | cut -f 0 -d "]")
     uci add_list firewall.@ipset[${IP_SET_ID}].entry='{{ item.ip }}'
   loop: "{{ allowed_internet }}"
   when: allowed_internet is defined and allowed_internet | length > 0
-  
+
 - name: "firewall: Add Management IPs"
   ansible.builtin.shell: |
     IP_SET_ID=$(uci show firewall | grep \@ipset|grep \'ManagementIPs\' | cut -f 2 -d "[" | cut -f 0 -d "]")
     uci add_list firewall.@ipset[${IP_SET_ID}].entry='{{ item.cidr }}'
   loop: "{{ management_cidrs }}"
   when: management_cidrs is defined and management_cidrs | length > 0
-  
+
 - name: "system: uci commit changes"
   uci:
     command: commit
-  
+
 - name: "firewall: enabling service"
   community.general.openwrt_init:
     name: firewall
@@ -43,21 +40,12 @@
   ansible.builtin.file:
     path: /opt/stacks/bridge-nft
     state: absent
-  
-- name: "firewall, bridge-nft: Clone bridge-nft repository"
-  ansible.builtin.git:
-    repo: 'https://x-access-token:{{ github_token }}@github.com/{{ github_org }}/iotgw_bridge-nft.git'
-    dest: /opt/stacks/bridge-nft
-    accept_hostkey: true
-  
-- name: "firewall, bridge-nft: Add GIT pre-push hook"
-  ansible.builtin.copy:
-    src: pre-push
-    dest: /opt/stacks/bridge-nft/.git/hooks/pre-push
-    owner: root
-    group: root
-    mode: '0755'
 
+- name: 'firewall, bridge-nft: deploy stack files (task-073 §7: vendored in files/stacks/, no git clone)'
+  ansible.builtin.copy:
+    src: stacks/bridge-nft/
+    dest: /opt/stacks/bridge-nft/
+    mode: preserve
 - name: "firewall, bridge-nft: binary execution permissions"
   ansible.builtin.file:
     path: "/opt/stacks/bridge-nft/{{ item }}"
@@ -65,7 +53,7 @@
     group: root
     mode: '0755'
   loop:
-    - bridge-nft
+  - bridge-nft
 
 - name: "firewall, bridge-nft: Create symlink for service"
   ansible.builtin.file:
@@ -95,4 +83,3 @@
   debug:
     msg: "bridge-nft service is running and enabled."
   when: "'running (enabled)' in bridge_nft_status.stdout"
-  

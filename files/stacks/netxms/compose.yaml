@@ -1,0 +1,41 @@
+name: netxms-agent
+services:
+  netxms-agent:
+    image: ghcr.io/oriolrius/docker-netxms-agent:v1.1.1
+    container_name: netxms-agent
+    restart: unless-stopped
+    privileged: true
+    network_mode: host
+    pid: host
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+      - SYS_ADMIN
+    security_opt:
+      - apparmor=unconfined
+    environment:
+      SERVER: "${NETXMS_SERVER_IP:-172.20.0.2}"
+      MASTER_SERVERS: "${NETXMS_MASTER_SERVERS:-172.20.0.0/16}"
+      DEBIAN_FRONTEND: noninteractive
+      DEBUG_LEVEL: "${NETXMS_DEBUG_LEVEL:-1}"
+      PROXY_AGENT: "${PROXY_AGENT:-Yes}"
+      PROXY_SNMP: "${PROXY_SNMP:-Yes}"
+    volumes:
+      - /dev:/dev
+      - /proc:/proc
+      - /sys:/sys
+      - /var/run:/var/run
+      - ./agent:/var/lib/netxms
+    healthcheck:
+      test: ["CMD", "pgrep", "nxagentd"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    labels:
+      kuma.__container: '{"name": "netxms-agent"}'
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

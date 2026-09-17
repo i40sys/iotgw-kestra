@@ -1,0 +1,7 @@
+data/
+*bak
+etc/writers.alloy
+etc/base.alloy
+etc/metrics.alloy
+bin/alloy
+lib/

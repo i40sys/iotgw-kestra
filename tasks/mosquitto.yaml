@@ -1,4 +1,3 @@
----
 - name: "mosquitto: Check if Docker stack is running"
   community.docker.docker_compose_v2:
     project_src: /opt/stacks/mosquitto
@@ -17,29 +16,18 @@
     path: /opt/stacks/mosquitto
     state: absent
 
-- name: "mosquitto: clonning repos"
-  ansible.builtin.git:
-    repo: 'https://x-access-token:{{ github_token }}@github.com/{{ github_org }}/iotgw_mosquitto.git'
-    dest: /opt/stacks/mosquitto
-    accept_hostkey: true
-
-
-- name: "mosquitto: adding GIT pre-push hook"
+- name: 'mosquitto: deploy stack files (task-073 §7: vendored in files/stacks/, no git clone)'
   ansible.builtin.copy:
-    src: pre-push
-    dest: /opt/stacks/mosquitto/.git/hooks/pre-push
-    owner: root
-    group: root
-    mode: '0755'
-
-
+    src: stacks/mosquitto/
+    dest: /opt/stacks/mosquitto/
+    mode: preserve
 - name: "mosquitto: Installing usermod for changing root password"
   community.general.opkg:
     name: "{{ item }}"
     state: present
   loop:
-    - shadow-usermod
-    - shadow-groupmod
+  - shadow-usermod
+  - shadow-groupmod
 
 
 - name: "mosquitto: Create mosquitto group with GID 1883"
@@ -70,8 +58,8 @@
     group: mosquitto
     mode: '0755'
   loop:
-    - etc
-    - data
+  - etc
+  - data
 
 - name: "mosquitto: Fetch mosquitto.conf.j2"
   ansible.builtin.fetch:
@@ -107,7 +95,7 @@
     owner: mosquitto
     group: mosquitto
     mode: '0640'
-  
+
 
 - name: "mosquitto: add MQTT user using mosquitto_passwd in Docker"
   community.docker.docker_container:
@@ -120,7 +108,7 @@
         {{ item.password }}
     network_mode: host
     volumes:
-      - /opt/stacks/mosquitto/etc:/mosquitto/config
+    - /opt/stacks/mosquitto/etc:/mosquitto/config
     auto_remove: true
     state: started
   loop: "{{ users }}"

@@ -1,0 +1,25 @@
+name: duplicati
+
+x-logging:
+  &default-logging
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "1"
+
+services:
+  duplicati:
+    image: ghcr.io/oriolrius/duplicati:v2.0.2
+    container_name: duplicati
+    network_mode: host
+    volumes:
+      - /:/mnt
+      - /backup:/backup
+      - ./data:/data
+      - .${DUPLICATI__IMPORT_CONFIG:-/import}:/import
+    restart: unless-stopped
+    env_file:
+      - .env
+    labels:
+      kuma.__container: '{"name": "duplicati"}'
+    logging: *default-logging

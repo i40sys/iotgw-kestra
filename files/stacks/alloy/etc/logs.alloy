@@ -1,0 +1,176 @@
+// System logs
+loki.source.syslog "logs_default_syslog" {
+  listener {
+    address      = "127.0.0.1:1514"
+    protocol     = "udp"
+    idle_timeout = "60s"
+    use_rfc5424_message = true
+    labels       = {
+      job = "syslog",
+    }
+    max_message_length = 8192
+  }
+  forward_to = [loki.process.logs_default_syslog.receiver]
+  relabel_rules = discovery.relabel.logs_default_syslog.rules
+}
+
+discovery.relabel "logs_default_syslog" {
+  targets = []
+
+  rule {
+    target_label  = "instance"
+    replacement   = constants.hostname
+  }
+
+  // syslog labels are listed at
+  // https://grafana.com/docs/loki/latest/send-data/promtail/configuration/#syslog
+  rule {
+    source_labels = ["__syslog_message_severity"]
+    target_label  = "level"
+  }
+
+  rule {
+    source_labels = ["__syslog_message_app_name"]
+    target_label  = "application"
+  }
+
+  rule {
+    source_labels = ["__syslog_message_facility"]
+    target_label  = "facility"
+  }
+}
+
+loki.process "logs_default_syslog" {
+  forward_to = [loki.write.loki_writer.receiver]
+
+  stage.drop {
+    older_than = "24h"
+    drop_counter_reason = "too old"
+  }
+
+  stage.drop {
+    longer_than         = "8KB"
+    drop_counter_reason = "too long"
+  }
+
+  stage.regex {
+    expression = "^<(?P<priority>\\d|\\d{2}|1[1-8]\\d|19[01])>(?P<version>\\d{1,2})\\s(?P<timestamp>-|(?P<fullyear>[12]\\d{3})-(?P<month>0\\d|1[0-2])-(?P<mday>[0-2]\\d|3[01])T(?P<hour>[01]\\d|2[0-3]):(?P<minute>[0-5]\\d):(?P<second>[0-5]\\d|60)(?:\\.(?P<secfrac>\\d{1,6}))?(?P<numoffset>Z|[+-]\\d{2}:\\d{2}))\\s(?P<hostname>\\S{1,255})\\s(?P<appname>\\S{1,48})\\s(?P<procid>\\S{1,128})\\s(?P<msg>.*)$"
+  }
+
+  stage.output  {
+    source = "msg"
+  }
+
+  stage.replace {
+    expression = "(ts=\\S+\\s+level=\\S+\\s+)"
+    // expression = "(.+)"
+    source = "msg"
+    replace = ""
+  }
+
+  stage.output {
+    source = "msg"
+  }
+}
+
+// Containers logs
+loki.source.docker "logs_default_docker" {
+  host          = "unix:///var/run/docker.sock"
+  targets       = discovery.docker.logs_default_docker.targets
+  forward_to    = [loki.process.logs_default_docker.receiver]
+  relabel_rules = discovery.relabel.logs_default_docker.rules
+}
+
+discovery.docker "logs_default_docker" {
+  host = "unix:///var/run/docker.sock"
+}
+
+loki.process "logs_default_docker" {
+  forward_to = [loki.write.loki_writer.receiver]
+
+  stage.drop {
+    older_than = "24h"
+    drop_counter_reason = "too old"
+  }
+
+  stage.drop {
+    longer_than         = "8KB"
+    drop_counter_reason = "too long"
+  }
+
+  stage.match {
+    selector = "{container_name=\"emqx\"}"
+
+    stage.json {
+      expressions = {
+        level = "level",
+      }
+    }
+
+    stage.labels {
+      values = {
+        level = null,
+      }
+    }
+  }
+
+  stage.match {
+    selector = "{container_name=\"hasura\"}"
+
+    stage.json {
+      expressions = {
+        level = "level",
+      }
+    }
+
+    stage.labels {
+      values = {
+        level = null,
+      }
+    }
+  }
+
+  stage.match {
+    selector = "{container_name=\"influx2\"}"
+
+    stage.regex {
+      expression = "lvl=(?P<level>\\w+)"
+    }
+
+    stage.labels {
+      values = {
+        level = null,
+      }
+    }
+  }
+}
+
+discovery.relabel "logs_default_docker" {
+  targets = []
+
+  rule {
+    source_labels = ["__meta_docker_container_id"]
+    target_label  = "container_id"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container_name"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_network_ip"]
+    target_label  = "container_ip"
+  }
+
+  rule {
+    target_label = "instance"
+    replacement  = constants.hostname
+  }
+
+  rule {
+    target_label = "application"
+    replacement  = "docker"
+  }
+}

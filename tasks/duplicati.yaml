@@ -1,4 +1,3 @@
----
 - name: "duplicati: Check if Docker stack is running"
   community.docker.docker_compose_v2:
     project_src: /opt/stacks/duplicati
@@ -17,20 +16,11 @@
     path: /opt/stacks/duplicati
     state: absent
 
-- name: "duplicati stack: clonning repos"
-  ansible.builtin.git:
-    repo: 'https://x-access-token:{{ github_token }}@github.com/{{ github_org }}/iotgw_duplicati.git'
-    dest: /opt/stacks/duplicati
-    accept_hostkey: true
-
-- name: "duplicati: adding GIT pre-push hook"
+- name: 'duplicati stack: deploy stack files (task-073 §7: vendored in files/stacks/, no git clone)'
   ansible.builtin.copy:
-    src: pre-push
-    dest: /opt/stacks/duplicati/.git/hooks/pre-push
-    owner: root
-    group: root
-    mode: '0755'
-
+    src: stacks/duplicati/
+    dest: /opt/stacks/duplicati/
+    mode: preserve
 - name: "duplicati: Fetch env.j2"
   ansible.builtin.fetch:
     src: /opt/stacks/duplicati/env.j2
@@ -51,8 +41,8 @@
     dest: "/tmp/{{ item }}.j2"
     flat: yes
   loop:
-    - Docker-duplicati-config.json
-    - System-duplicati-config.json
+  - Docker-duplicati-config.json
+  - System-duplicati-config.json
 
 - name: "duplicati: Template backup configuration file {{ item }}"
   ansible.builtin.template:
@@ -62,8 +52,8 @@
     group: root
     mode: '0640'
   loop:
-    - Docker-duplicati-config.json
-    - System-duplicati-config.json
+  - Docker-duplicati-config.json
+  - System-duplicati-config.json
 
 - name: "duplicati: Start Docker stack"
   community.docker.docker_compose_v2:

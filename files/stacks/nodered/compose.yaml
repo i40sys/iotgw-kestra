@@ -1,0 +1,33 @@
+name: nodered
+
+x-logging:
+  &default-logging
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "1"
+
+services:
+  service:
+    image: nodered/node-red:${NODERED_VERSION}
+    restart: unless-stopped
+    hostname: ${node-red}
+    privileged: true
+    env_file:
+      - .env
+    volumes:
+      - /dev:/host/dev
+      # - /etc/localtime:/etc/localtime:ro
+      - /opt/stacks/nodered/data:/data
+    network_mode: host
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - node /healthcheck.js
+      interval: 60s
+      timeout: 3s
+      retries: 3
+      start_period: 30s
+    labels:
+      kuma.__container: '{"name": "nodered"}'
+    logging: *default-logging

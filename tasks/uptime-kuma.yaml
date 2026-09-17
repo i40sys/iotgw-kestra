@@ -1,4 +1,3 @@
----
 - name: "uptime-kuma: Check if Docker stack is running"
   community.docker.docker_compose_v2:
     project_src: /opt/stacks/uptime
@@ -17,20 +16,11 @@
     path: /opt/stacks/uptime
     state: absent
 
-- name: "uptime-kuma: clonning repos"
-  ansible.builtin.git:
-    repo: 'https://x-access-token:{{ github_token }}@github.com/{{ github_org }}/iotgw_uptime-kuma.git'
-    dest: /opt/stacks/uptime
-    accept_hostkey: true
-
-- name: "uptime-kuma: adding GIT pre-push hook"
+- name: 'uptime-kuma: deploy stack files (task-073 §7: vendored in files/stacks/, no git clone)'
   ansible.builtin.copy:
-    src: pre-push
-    dest: /opt/stacks/uptime/.git/hooks/pre-push
-    owner: root
-    group: root
-    mode: '0755'
-
+    src: stacks/uptime/
+    dest: /opt/stacks/uptime/
+    mode: preserve
 - name: "uptime-kuma: Fetch env.j2"
   ansible.builtin.fetch:
     src: /opt/stacks/uptime/env.j2

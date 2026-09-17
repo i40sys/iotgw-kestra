@@ -1,0 +1,140 @@
+#!/bin/sh /etc/rc.common
+
+EXTRA_COMMANDS="status dump"
+START=99
+STOP=01
+
+start() {
+    logger -t bridge-nft "Starting bridge-nft service..."
+
+    # Ensure bridge table is removed before creating it
+    if nft list tables bridge | grep -sq "table bridge br_lan"; then
+        nft delete table bridge br_lan
+    fi
+
+    # Apply bridge.nft
+    nft -f /opt/stacks/bridge-nft/bridge.nft
+
+    logger -t bridge-nft "bridge-nft service started."
+}
+
+stop() {
+    logger -t bridge-nft "Stopping bridge-nft service..."
+
+    # Ensure bridge table is removed on stop
+    if nft list tables bridge | grep -sq "table bridge br_lan"; then
+        nft delete table bridge br_lan
+    fi
+
+    logger -t bridge-nft "bridge-nft service stopped."
+}
+
+restart() {
+    stop
+    start
+}
+
+status() {
+    # Check if the service is running by verifying the existence of the bridge table
+    if nft list tables bridge | grep -sq "table bridge br_lan"; then
+        state="running"
+    else
+        state="stopped"
+    fi
+
+    # Check if the service is enabled (i.e. has a startup symlink in /etc/rc.d)
+    if [ -x /etc/rc.d/S99bridge-nft ]; then
+        enabled="enabled"
+    else
+        enabled="disabled"
+    fi
+
+    echo "${state} (${enabled})"
+}
+
+enabled() {
+  status
+}
+
+dump() {
+  nft list ruleset bridge
+}
+
+#!/bin/sh /etc/rc.common
+
+EXTRA_COMMANDS="status dump"
+START=99
+STOP=01
+
+start() {
+    logger -t bridge-nft "Starting bridge-nft service..."
+
+    # Ensure bridge table is removed before creating it
+    if nft list tables bridge | grep -sq "table bridge br_lan"; then
+        nft delete table bridge br_lan
+    fi
+
+    # Apply bridge.nft
+    nft -f /opt/stacks/bridge-nft/bridge.nft
+
+    logger -t bridge-nft "bridge-nft service started."
+}
+
+stop() {
+    logger -t bridge-nft "Stopping bridge-nft service..."
+
+    # Ensure bridge table is removed on stop
+    if nft list tables bridge | grep -sq "table bridge br_lan"; then
+        nft delete table bridge br_lan
+    fi
+
+    logger -t bridge-nft "bridge-nft service stopped."
+}
+
+restart() {
+    stop
+    start
+}
+
+status() {
+    # Check if the service is running by verifying the existence of the bridge table
+    if nft list tables bridge | grep -sq "table bridge br_lan"; then
+        state="running"
+    else
+        state="stopped"
+    fi
+
+    # Check if the service is enabled (i.e. has a startup symlink in /etc/rc.d)
+    if [ -x /etc/rc.d/S99bridge-nft ]; then
+        enabled="enabled"
+    else
+        enabled="disabled"
+    fi
+
+    echo "${state} (${enabled})"
+}
+
+enabled() {
+    status
+}
+
+dump() {
+    nft list ruleset bridge
+}
+
+# Custom help function to include extra commands
+help() {
+    cat <<EOF
+Usage: /etc/init.d/bridge-nft [command]
+
+Commands:
+  start     Start the service
+  stop      Stop the service
+  restart   Restart the service
+  enable    Enable service autostart
+  disable   Disable service autostart
+  enabled   Check if service is enabled at boot
+  status    Show current service status (running/stopped and enabled/disabled)
+  dump      Dump the current nft ruleset
+EOF
+}

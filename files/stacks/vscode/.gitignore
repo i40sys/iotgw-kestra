@@ -1,0 +1,14 @@
+config/.cache/
+config/data/CachedExtensionVSIXs/
+config/data/CachedProfilesData/
+config/data/logs/
+config/data/User/caches
+config/data/User/History
+config/data/User/snippets
+config/data/User/workspaceStorage
+config/data/User/globalStorage
+config/data/User/systemExtensionsCache.json
+config/data/User/customBuiltinExtensionsCache.json
+.env
+config/.local/share/code-server/coder-logs/
+# !config/data/User/settings.json
