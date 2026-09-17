@@ -1,0 +1,147 @@
+{
+  "CreatedByVersion": "2.0.8.1",
+  "Schedule": {
+    "ID": 2,
+    "Tags": [
+      "ID=4"
+    ],
+    "Time": "2024-09-07T00:00:00Z",
+    "Repeat": "1D",
+    "LastRun": "2024-09-06T00:00:00Z",
+    "Rule": "AllowedWeekDays=Monday,Tuesday,Wednesday,Thursday,Friday,Saturday,Sunday",
+    "AllowedDays": [
+      "mon",
+      "tue",
+      "wed",
+      "thu",
+      "fri",
+      "sat",
+      "sun"
+    ]
+  },
+  "Backup": {
+    "ID": "4",
+    "Name": "System",
+    "Description": "",
+    "Tags": [],
+    "TargetURL": "{{ duplicati_system_target_url }}",
+    "DBPath": "/data/Duplicati/backup-system.sqlite",
+    "Sources": [
+      "/mnt/bin/",
+      "/mnt/boot/",
+      "/mnt/etc/",
+      "/mnt/lib/",
+      "/mnt/lib64/",
+      "/mnt/overlay/",
+      "/mnt/rom/",
+      "/mnt/sbin/",
+      "/mnt/usr/",
+      "/mnt/var/",
+      "/mnt/www/"
+    ],
+    "Settings": [
+      {
+        "Filter": "",
+        "Name": "encryption-module",
+        "Value": "",
+        "Argument": null
+      },
+      {
+        "Filter": "",
+        "Name": "compression-module",
+        "Value": "zip",
+        "Argument": null
+      },
+      {
+        "Filter": "",
+        "Name": "dblock-size",
+        "Value": "1GB",
+        "Argument": null
+      },
+      {
+        "Filter": "",
+        "Name": "retention-policy",
+        "Value": "1W:1D,4W:1W,12M:1M",
+        "Argument": null
+      },
+      {
+        "Filter": "",
+        "Name": "--no-encryption",
+        "Value": "true",
+        "Argument": null
+      },
+      {
+        "Filter": "",
+        "Name": "--send-http-url",
+        "Value": "http://localhost:8080",
+        "Argument": null
+      },
+      {
+        "Filter": "",
+        "Name": "--send-http-result-output-format",
+        "Value": "Json",
+        "Argument": null
+      }
+    ],
+    "Filters": [
+      {
+        "Order": 0,
+        "Include": false,
+        "Expression": "/mnt/overlay/upper/backup/"
+      },
+      {
+        "Order": 1,
+        "Include": false,
+        "Expression": "/mnt/overlay/upper/mnt/"
+      },
+      {
+        "Order": 2,
+        "Include": false,
+        "Expression": "/mnt/overlay/upper/opt/"
+      },
+      {
+        "Order": 3,
+        "Include": false,
+        "Expression": "/mnt/overlay/upper/run/"
+      }
+    ],
+    "Metadata": {
+      "LastBackupDate": "20240906T051633Z",
+      "BackupListCount": "3",
+      "TotalQuotaSpace": "0",
+      "FreeQuotaSpace": "0",
+      "AssignedQuotaSpace": "-1",
+      "TargetFilesSize": "189518617",
+      "TargetFilesCount": "13",
+      "TargetSizeString": "180.74 MB",
+      "SourceFilesSize": "397773199",
+      "SourceFilesCount": "5648",
+      "SourceSizeString": "379.35 MB",
+      "LastBackupStarted": "20240906T051633Z",
+      "LastBackupFinished": "20240906T051641Z",
+      "LastBackupDuration": "00:00:08.1286750",
+      "LastCompactDuration": "00:00:00.0258650",
+      "LastCompactStarted": "20240906T051639Z",
+      "LastCompactFinished": "20240906T051639Z",
+      "LastErrorDate": "20240906T043620Z",
+      "LastErrorMessage": "Found 6 remote files that are not recorded in local storage, please run repair",
+      "LastRestoreDuration": "00:00:17.1308880",
+      "LastRestoreStarted": "20240329T091013Z",
+      "LastRestoreFinished": "20240329T091030Z"
+    },
+    "IsTemporary": false
+  },
+  "DisplayNames": {
+    "/mnt/bin/": "bin",
+    "/mnt/boot/": "boot",
+    "/mnt/etc/": "etc",
+    "/mnt/lib/": "lib",
+    "/mnt/lib64/": "lib64",
+    "/mnt/overlay/": "overlay",
+    "/mnt/rom/": "rom",
+    "/mnt/sbin/": "sbin",
+    "/mnt/usr/": "usr",
+    "/mnt/var/": "var",
+    "/mnt/www/": "www"
+  }
+}

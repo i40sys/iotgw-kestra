@@ -1,0 +1,87 @@
+prometheus.exporter.self "alloy" {}
+
+prometheus.scrape "alloy" {
+	targets    = prometheus.exporter.self.alloy.targets
+	forward_to = [prometheus.remote_write.mimir_writer.receiver]
+
+  scrape_timeout =  "30s"
+  scrape_interval = "50s"
+  honor_timestamps = false
+}
+
+// discovery.docker "containers_discovery" {
+//   host = "unix:///var/run/docker.sock"
+// }
+
+// prometheus.scrape "containers_scraper" {
+//   targets    = discovery.docker.containers_discovery.targets
+// 	forward_to = [prometheus.remote_write.mimir_writer.receiver]
+// }
+
+prometheus.exporter.cadvisor "cadvisor_export" {
+  docker_host = "unix:///var/run/docker.sock"
+
+  storage_duration = "1m"
+}
+
+// Configure a prometheus.scrape component to collect cadvisor metrics.
+prometheus.scrape "cadvisor_scraper" {
+  targets    = prometheus.exporter.cadvisor.cadvisor_export.targets
+  forward_to = [ prometheus.remote_write.mimir_writer.receiver ]
+  
+  honor_timestamps = false
+  scrape_timeout =  "30s"
+  scrape_interval = "50s"
+}
+
+prometheus.exporter.unix "linux_exporter" { }
+
+// Configure a prometheus.scrape component to collect unix metrics.
+prometheus.scrape "linux_scraper" {
+  targets    = prometheus.exporter.unix.linux_exporter.targets
+  forward_to = [prometheus.remote_write.mimir_writer.receiver]
+
+  honor_timestamps = false
+  scrape_timeout = "30s"
+  scrape_interval = "50s"
+}
+
+// getting metrics from service: docker_container_exporter
+// repos: https://github.com/oriolrius/docker_container_exporter
+prometheus.scrape "containers_exporter" {
+  targets    = [
+    { "__address__" = "localhost:8118",
+      "__scheme__" = "http",
+      "instance" = constants.hostname,
+      "job" = "containers_exporter",
+      "__scrape_interval__" = "50s",
+     },
+  ]
+  forward_to = [prometheus.remote_write.mimir_writer.receiver]
+
+  honor_timestamps = false
+  scrape_timeout =  "30s"
+  scrape_interval = "50s"
+}
+
+// uptime-kuma metrics
+prometheus.scrape "kuma_exporter" {
+  targets    = [
+    { "__address__" = "127.0.0.1:3003",
+      "__scheme__" = "http",
+      "__username__" = "/metrics",
+      "instance" = constants.hostname,
+      "job" = "kuma_exporter",
+      "__scrape_interval__" = "50s",
+     },
+  ]
+  basic_auth {
+    username = "{{ kuma_exporter_username }}"
+    password = "{{ kuma_exporter_password }}"
+  }
+  forward_to = [prometheus.remote_write.mimir_writer.receiver]
+
+  honor_timestamps = false
+  scrape_timeout =  "30s"
+  scrape_interval = "50s"
+}

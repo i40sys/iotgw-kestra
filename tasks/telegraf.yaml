@@ -1,4 +1,3 @@
----
 - name: "telegraf: Check if Docker stack is running"
   community.docker.docker_compose_v2:
     project_src: /opt/stacks/telegraf
@@ -17,21 +16,11 @@
     path: /opt/stacks/telegraf
     state: absent
 
-- name: "telegraf: clonning repos"
-  ansible.builtin.git:
-    repo: 'https://x-access-token:{{ github_token }}@github.com/{{ github_org }}/iotgw_telegraf.git'
-    dest: /opt/stacks/telegraf
-    accept_hostkey: true
-
-- name: "telegraf: adding GIT pre-push hook"
+- name: 'telegraf: deploy stack files (task-073 §7: vendored in files/stacks/, no git clone)'
   ansible.builtin.copy:
-    src: pre-push
-    dest: /opt/stacks/telegraf/.git/hooks/pre-push
-    owner: root
-    group: root
-    mode: '0755'
-  
-
+    src: stacks/telegraf/
+    dest: /opt/stacks/telegraf/
+    mode: preserve
 - name: "telegraf: Fetch env.j2"
   ansible.builtin.fetch:
     src: /opt/stacks/telegraf/env.j2

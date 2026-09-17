@@ -1,0 +1,21 @@
+name: telegraf
+
+x-logging:
+  &default-logging
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "1"
+
+services:
+  agent:
+    container_name: telegraf
+    image: telegraf:1.31.1-alpine
+    network_mode: host
+    command: '-config ${CONFIG_TELEGRAF}'
+    restart: unless-stopped
+    env_file:
+      - .env
+    labels:
+      kuma.__container: '{"name": "telegraf"}'
+    logging: *default-logging

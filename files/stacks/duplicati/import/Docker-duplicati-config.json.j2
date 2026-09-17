@@ -1,0 +1,147 @@
+{
+  "CreatedByVersion": "2.0.8.1",
+  "Schedule": {
+    "ID": 1,
+    "Tags": [
+      "ID=3"
+    ],
+    "Time": "2024-09-06T23:00:00Z",
+    "Repeat": "1D",
+    "LastRun": "2024-09-06T04:17:26Z",
+    "Rule": "AllowedWeekDays=Monday,Tuesday,Wednesday,Thursday,Friday,Saturday,Sunday",
+    "AllowedDays": [
+      "mon",
+      "tue",
+      "wed",
+      "thu",
+      "fri",
+      "sat",
+      "sun"
+    ]
+  },
+  "Backup": {
+    "ID": "3",
+    "Name": "Docker",
+    "Description": "",
+    "Tags": [],
+    "TargetURL": "{{ duplicati_docker_target_url }}",
+    "DBPath": "/data/Duplicati/backup-docker.sqlite",
+    "Sources": [
+      "/mnt/opt/"
+    ],
+    "Settings": [
+      {
+        "Filter": "",
+        "Name": "encryption-module",
+        "Value": "",
+        "Argument": null
+      },
+      {
+        "Filter": "",
+        "Name": "compression-module",
+        "Value": "zip",
+        "Argument": null
+      },
+      {
+        "Filter": "",
+        "Name": "dblock-size",
+        "Value": "1GB",
+        "Argument": null
+      },
+      {
+        "Filter": "",
+        "Name": "retention-policy",
+        "Value": "1W:1D,4W:1W,12M:1M",
+        "Argument": null
+      },
+      {
+        "Filter": "",
+        "Name": "--no-encryption",
+        "Value": "true",
+        "Argument": null
+      },
+      {
+        "Filter": "",
+        "Name": "--send-http-url",
+        "Value": "http://localhost:8080",
+        "Argument": null
+      },
+      {
+        "Filter": "",
+        "Name": "--send-http-result-output-format",
+        "Value": "Json",
+        "Argument": null
+      }
+    ],
+    "Filters": [
+      {
+        "Order": 0,
+        "Include": false,
+        "Expression": "*/mnt/opt/docker/vfs*/"
+      },
+      {
+        "Order": 1,
+        "Include": false,
+        "Expression": "*/mnt/opt/docker/containers*/"
+      },
+      {
+        "Order": 2,
+        "Include": false,
+        "Expression": "*/mnt/opt/docker/overlay2*/"
+      },
+      {
+        "Order": 3,
+        "Include": false,
+        "Expression": "*/mnt/opt/docker/buildkit*/"
+      },
+      {
+        "Order": 4,
+        "Include": false,
+        "Expression": "*/mnt/opt/docker/tmp*/"
+      },
+      {
+        "Order": 5,
+        "Include": false,
+        "Expression": "*/mnt/opt/docker/containerd*/"
+      },
+      {
+        "Order": 6,
+        "Include": false,
+        "Expression": "*/mnt/opt/docker/volumes*/"
+      },
+      {
+        "Order": 7,
+        "Include": false,
+        "Expression": "*/mnt/opt/docker/network/files*/"
+      }
+    ],
+    "Metadata": {
+      "LastBackupDate": "20240906T051508Z",
+      "BackupListCount": "2",
+      "TotalQuotaSpace": "0",
+      "FreeQuotaSpace": "0",
+      "AssignedQuotaSpace": "-1",
+      "TargetFilesSize": "225732448",
+      "TargetFilesCount": "20",
+      "TargetSizeString": "215.28 MB",
+      "SourceFilesSize": "864830986",
+      "SourceFilesCount": "3395",
+      "SourceSizeString": "824.77 MB",
+      "LastBackupStarted": "20240906T051508Z",
+      "LastBackupFinished": "20240906T051519Z",
+      "LastBackupDuration": "00:00:10.9711130",
+      "LastCompactDuration": "00:00:00.0293450",
+      "LastCompactStarted": "20240906T051517Z",
+      "LastCompactFinished": "20240906T051517Z",
+      "LastRestoreDuration": "00:00:01.1595940",
+      "LastRestoreStarted": "20240225T090119Z",
+      "LastRestoreFinished": "20240225T090121Z",
+      "LastErrorDate": "20240905T175115Z",
+      "LastErrorMessage": "Found 32 remote files that are not recorded in local storage, please run repair"
+    },
+    "IsTemporary": false
+  },
+  "DisplayNames": {
+    "/mnt/opt/": "opt"
+  }
+}

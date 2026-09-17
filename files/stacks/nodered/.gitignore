@@ -1,0 +1,8 @@
+data/.npm/
+data/node_modules/
+data/*.backup
+data/projects/*
+!data/projects/.sshkeys/
+data/.sessions.json
+data/.config.projects.json
+.env

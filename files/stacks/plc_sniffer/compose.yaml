@@ -1,0 +1,66 @@
+services:
+  plc_sniffer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ghcr.io/oriolrius/plc_sniffer:latest
+    container_name: plc_sniffer
+    restart: unless-stopped
+    
+    # Network mode - required for packet capture
+    network_mode: host
+    
+    # For packet capture, use ONE of these approaches:
+    # Option 1: Run with privileges (recommended for production)
+    privileged: true
+    
+    # Option 2: Use capabilities (may not work in all environments)
+    # cap_add:
+    #   - NET_RAW
+    #   - NET_ADMIN
+    # user: "1000:1000"  # Run as non-root with capabilities
+    
+    environment:
+      # Network configuration
+      - INTERFACE=${INTERFACE:-eth0}
+      - FILTER=${FILTER:-udp port 40000}
+      - DESTINATION_IP=${DESTINATION_IP:-127.0.0.1}
+      - DESTINATION_PORT=${DESTINATION_PORT:-40000}
+      
+      # Performance settings
+      - RATE_LIMIT=${RATE_LIMIT:-0}  # 0 = unlimited, or specify pps
+      - MAX_PACKET_SIZE=${MAX_PACKET_SIZE:-65535}
+      
+      # Operational settings
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - HEALTH_CHECK_PORT=${HEALTH_CHECK_PORT:-8080}
+      - RUN_AS_ROOT=${RUN_AS_ROOT:-true}  # Set to false if using capabilities
+    
+    # Resource limits (optional - uncomment if needed)
+    # deploy:
+    #   resources:
+    #     limits:
+    #       cpus: '1.0'
+    #       memory: 256M
+    #     reservations:
+    #       cpus: '0.5'
+    #       memory: 128M
+    
+    # Health check
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; s=socket.socket(); s.settimeout(1); s.connect(('localhost', ${HEALTH_CHECK_PORT:-8080})); s.close()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    
+    # Uptime kuma monitoring
+    labels:
+      kuma.__container: '{"name": "plc_sniffer"}'
+
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "1"

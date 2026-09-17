@@ -1,28 +1,26 @@
----
 - name: "plc_sniffer: Check if Docker stack is running"
   community.docker.docker_compose_v2:
     project_src: /opt/stacks/plc_sniffer
     state: present
   register: stack_status
   ignore_errors: true
-  
+
 - name: "plc_sniffer: Teardown the Docker stack if running"
   community.docker.docker_compose_v2:
     project_src: /opt/stacks/plc_sniffer
     state: absent
   when: stack_status is not failed
-  
+
 - name: "plc_sniffer: Remove directory /opt/stacks/plc_sniffer"
   ansible.builtin.file:
     path: /opt/stacks/plc_sniffer
     state: absent
-  
-- name: "plc_sniffer: clonning repos"
-  ansible.builtin.git:
-    repo: 'https://x-access-token:{{ github_token }}@github.com/{{ github_org }}/iotgw_plc_sniffer.git'
-    dest: /opt/stacks/plc_sniffer
-    accept_hostkey: true
 
+- name: 'plc_sniffer: deploy stack files (task-073 §7: vendored in files/stacks/, no git clone)'
+  ansible.builtin.copy:
+    src: stacks/plc_sniffer/
+    dest: /opt/stacks/plc_sniffer/
+    mode: preserve
 - name: "plc_sniffer: Fetch env.j2 template"
   ansible.builtin.fetch:
     src: /opt/stacks/plc_sniffer/env.j2
@@ -39,14 +37,6 @@
     mode: '0640'
   when: ansible_failed_result is not defined
 
-- name: "plc_sniffer: adding GIT pre-push hook"
-  ansible.builtin.copy:
-    src: pre-push
-    dest: /opt/stacks/plc_sniffer/.git/hooks/pre-push
-    owner: root
-    group: root
-    mode: '0755'
-  
 - name: "plc_sniffer: Start Docker stack"
   community.docker.docker_compose_v2:
     project_src: /opt/stacks/plc_sniffer

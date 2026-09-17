@@ -1,0 +1,32 @@
+name: vscode
+
+x-logging:
+  &default-logging
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "1"
+
+services:
+  editor:
+    image: lscr.io/linuxserver/code-server:latest
+    volumes:
+      - /opt/stacks/vscode/config:/config
+      - /opt/stacks/vscode/config/.ssh:/root/.ssh
+      - /root/.bashrc:/config/.bashrc
+      - /:/mnt
+      # - /opt/stacks:/mnt/opt/stacks
+      # - /opt/containerd:/mnt/opt/containerd
+      # - /etc:/mnt/etc
+      # - /root:/mnt/root
+      # - /boot:/mnt/boot
+      # - /www:/mnt/www
+    restart: unless-stopped
+    network_mode: host
+    # ports:
+    #   - 8443:8443
+    env_file:
+      - .env
+    labels:
+      kuma.__container: '{"name": "vscode"}'
+    logging: *default-logging

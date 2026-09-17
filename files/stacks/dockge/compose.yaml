@@ -1,0 +1,31 @@
+name: dockge
+
+x-logging:
+  &default-logging
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "1"
+
+services:
+  dockge:
+    image: louislam/dockge:1
+    restart: unless-stopped
+    network_mode: host
+    #ports:
+    #  - 5001:5001
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /opt/stacks/dockge/data:/app/data
+      - /opt/stacks:/opt/stacks
+      - /root/.docker/:/root/.docker
+    environment:
+      - DOCKGE_STACKS_DIR=/opt/stacks
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    labels:
+      kuma.__container: '{"name": "dockge"}'
+    logging: *default-logging

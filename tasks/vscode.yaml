@@ -1,4 +1,3 @@
----
 - name: "VSCode: Check if Docker stack is running"
   community.docker.docker_compose_v2:
     project_src: /opt/stacks/vscode
@@ -18,20 +17,11 @@
     state: absent
   when: stack_status is not failed
 
-- name: "VSCode: Clone VSCode repository"
-  ansible.builtin.git:
-    repo: 'https://x-access-token:{{ github_token }}@github.com/{{ github_org }}/iotgw_vscode.git'
-    dest: /opt/stacks/vscode
-    accept_hostkey: true
-
-- name: "VSCode: Add GIT pre-push hook"
+- name: 'VSCode: deploy stack files (task-073 §7: vendored in files/stacks/, no git clone)'
   ansible.builtin.copy:
-    src: pre-push
-    dest: /opt/stacks/vscode/.git/hooks/pre-push
-    owner: root
-    group: root
-    mode: '0755'
-
+    src: stacks/vscode/
+    dest: /opt/stacks/vscode/
+    mode: preserve
 - name: "VSCode: Fetch .env.j2"
   ansible.builtin.fetch:
     src: /opt/stacks/vscode/.env.j2

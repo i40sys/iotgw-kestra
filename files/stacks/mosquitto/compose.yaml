@@ -1,0 +1,21 @@
+name: mosquitto
+
+x-logging:
+  &default-logging
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "1"
+
+services:
+  mqtt:
+    container_name: mqtt
+    image: eclipse-mosquitto:2.0
+    network_mode: host
+    volumes:
+      - /opt/stacks/mosquitto/etc:/mosquitto/config
+      - /opt/stacks/mosquitto/data:/mosquitto/data
+    restart: unless-stopped
+    labels:
+      kuma.__container: '{"name": "mqtt"}'
+    logging: *default-logging

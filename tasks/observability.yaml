@@ -1,44 +1,34 @@
----
 - name: "alloy: Remove directory /opt/stacks/alloy"
   ansible.builtin.file:
     path: /opt/stacks/alloy
     state: absent
-  
-- name: "alloy: Clone alloy repository"
-  ansible.builtin.git:
-    repo: 'https://x-access-token:{{ github_token }}@github.com/{{ github_org }}/alloy.git'
-    dest: /opt/stacks/alloy
-    accept_hostkey: true
-  
+
+- name: 'alloy: deploy stack files (task-073 §7: vendored in files/stacks/, no git clone)'
+  ansible.builtin.copy:
+    src: stacks/alloy/
+    dest: /opt/stacks/alloy/
+    mode: preserve
 - name: "alloy: creating required directories"
   ansible.builtin.file:
     path: "/opt/stacks/alloy/{{ item }}"
     state: directory
     mode: '0755'
   loop:
-    - bin
-    - lib
+  - bin
+  - lib
 
-- name: "alloy: Add GIT pre-push hook"
-  ansible.builtin.copy:
-    src: pre-push
-    dest: /opt/stacks/alloy/.git/hooks/pre-push
-    owner: root
-    group: root
-    mode: '0755'
-  
 - name: "alloy: Extract glibc.tar.gz, alloy binary requirement."
   ansible.builtin.unarchive:
     src: /opt/stacks/alloy/contrib/glibc.tar.gz
     dest: /opt/stacks/alloy/lib/
     remote_src: yes
-  
+
 - name: "alloy: linking glibc with the O.S."
   ansible.builtin.file:
     src: /opt/stacks/alloy/lib/x86_64-linux-gnu
     dest: /lib/x86_64-linux-gnu
     state: link
-  
+
 - name: "alloy: linking glibc with the O.S."
   ansible.builtin.file:
     src: /opt/stacks/alloy/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2
@@ -52,33 +42,32 @@
     owner: root
     group: root
     mode: '0755'
-  
 - name: "alloy: Fetch latest version of alloy"
   ansible.builtin.shell: |
     # curl -sL https://api.github.com/repos/grafana/alloy/releases/latest | jq -r ".tag_name"
     echo "v1.5.1"
   register: alloy_version
   changed_when: false
-  
+
 - name: "alloy: Download alloy"
   ansible.builtin.get_url:
     url: https://github.com/grafana/alloy/releases/download/{{ alloy_version.stdout }}/alloy-linux-amd64.zip
     dest: /tmp/alloy.zip
-  
+
 - name: "alloy: Unzip alloy.zip"
   ansible.builtin.unarchive:
     src: /tmp/alloy.zip
     dest: /opt/stacks/alloy/bin
     remote_src: yes
-  
+
 - name: "alloy: remove alloy.zip"
   ansible.builtin.file:
     path: /tmp/alloy.zip
     state: absent
-  
+
 - name: "alloy: Rename unzipped alloy file"
   ansible.builtin.command: mv /opt/stacks/alloy/bin/alloy-linux-amd64 /opt/stacks/alloy/bin/alloy
-  
+
 - name: "alloy: Set executable permissions on alloy.zip"
   ansible.builtin.file:
     path: "/opt/stacks/alloy/bin/alloy"
@@ -87,9 +76,9 @@
 - name: Set alloy config files
   ansible.builtin.set_fact:
     alloy_config_files:
-      - writers.alloy
-      - base.alloy
-      - metrics.alloy
+    - writers.alloy
+    - base.alloy
+    - metrics.alloy
 
 - name: "alloy: Fetch config {{ item }}.j2"
   ansible.builtin.fetch:
@@ -97,7 +86,6 @@
     dest: "/tmp/{{ item }}.j2"
     flat: yes
   with_items: "{{ alloy_config_files }}"
-  
 - name: "alloy: Template {{ item }}.j2 > {{ item }}"
   ansible.builtin.template:
     src: "/tmp/{{ item }}.j2"
@@ -106,7 +94,6 @@
     group: root
     mode: '0640'
   with_items: "{{ alloy_config_files }}"
-  
 - name: "alloy: Clean up controller copy of {{ item }}.j2"
   ansible.builtin.file:
     path: /tmp/{{ item }}.j2
@@ -121,7 +108,7 @@
     group: root
     mode: '0755'
   loop:
-    - alloy
+  - alloy
 
 - name: "alloy: Create symlink for service"
   ansible.builtin.file:
@@ -138,4 +125,3 @@
   community.general.openwrt_init:
     name: alloy
     state: restarted
-  

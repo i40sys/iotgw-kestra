@@ -1,36 +1,26 @@
----
 - name: "dockge: Check if Docker stack is running"
   community.docker.docker_compose_v2:
     project_src: /opt/stacks/dockge
     state: present
   register: stack_status
   ignore_errors: true
-  
+
 - name: "dockge: Teardown the Docker stack if running"
   community.docker.docker_compose_v2:
     project_src: /opt/stacks/dockge
     state: absent
   when: stack_status is not failed
-  
+
 - name: "dockge: Remove directory /opt/stacks/dockge"
   ansible.builtin.file:
     path: /opt/stacks/dockge
     state: absent
-  
-- name: "dockge: clonning repos"
-  ansible.builtin.git:
-    repo: 'https://x-access-token:{{ github_token }}@github.com/{{ github_org }}/iotgw_dockge.git'
-    dest: /opt/stacks/dockge
-    accept_hostkey: true
-  
-- name: "dockge: adding GIT pre-push hook"
+
+- name: 'dockge: deploy stack files (task-073 §7: vendored in files/stacks/, no git clone)'
   ansible.builtin.copy:
-    src: pre-push
-    dest: /opt/stacks/dockge/.git/hooks/pre-push
-    owner: root
-    group: root
-    mode: '0755'
-  
+    src: stacks/dockge/
+    dest: /opt/stacks/dockge/
+    mode: preserve
 - name: "dockge: Start Docker stack"
   community.docker.docker_compose_v2:
     project_src: /opt/stacks/dockge
