@@ -1,0 +1,147 @@
+id: ssh-ca-renewal
+namespace: iotgw-ng
+
+# task-104: controller-driven SSH HOST-CERTIFICATE RENEWAL.
+#
+# tasks/ssh_ca.yaml (run via the `provisioning` flow's `ssh_ca` tag) is already
+# self-idempotent: its on-gateway check re-signs the host cert ONLY when the
+# installed cert has less than `ssh_ca_renew_margin_seconds` (default 2592000s
+# = 30d) of validity left, and it always reuses the existing host key
+# (re-sign, not re-key). So "renewal" needs no new gateway-side logic — it is
+# simply re-running the `ssh_ca` tag against the enrolled fleet on a schedule;
+# each gateway decides for itself whether anything actually happens. That
+# makes running the full candidate set daily safe and idempotent.
+#
+# SAFETY (non-negotiable): the Schedule trigger below ships `disabled: true`.
+# Real device IPs (10.121.0.0/16, 192.168.4.0/24, etc.) are LIVE hardware —
+# firing this at the real fleet before every candidate device has completed
+# at least one successful `ssh_ca` enrollment would be destructive/disruptive.
+# An operator enables the trigger only once the fleet is cert-enrolled. Do NOT
+# remove `disabled: true` without that confirmation.
+
+triggers:
+  - id: schedule
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "0 3 * * *" # daily, off-hours
+    disabled: true # SAFETY (task-104) — operator enables once the fleet is cert-enrolled
+
+tasks:
+  # READ-ONLY: candidate devices are those whose domain has a PKI zone
+  # (decision-024 — enrollment is possible) AND that have an ip_address
+  # (reachable). Schema verified against
+  # iotgw-ui/supabase/migrations/{20250922113845_new_devices_table,
+  # 20250824185553_networks_table,20260914000000_add_pki_zone_to_domains}.sql:
+  # devices(id, network_id, name, ip_address, totp_counter, ssh_key_id),
+  # networks(id, domain_id), domains(id, pki_zone).
+  - id: query_candidates
+    type: io.kestra.plugin.jdbc.postgresql.Query
+    # io.kestra.plugin.jdbc.postgresql.Query, plugin-jdbc-postgres 1.15.5 (this
+    # instance's installed version, verified via GET /api/v1/plugins/
+    # io.kestra.plugin.jdbc.postgresql.Query). Direct connection to the
+    # StackGres primary (no pooler) per decision-018 / root CLAUDE.md.
+    url: jdbc:postgresql://supabase-db.supabase-db.svc.cluster.local:5432/postgres
+    username: "{{ kv('SUPABASE_DB_USER') }}"
+    password: "{{ kv('SUPABASE_DB_PASSWORD') }}"
+    fetchType: FETCH
+    sql: |
+      SELECT
+        d.id                    AS device_id,
+        d.name                  AS device_name,
+        d.totp_counter          AS totp_counter,
+        d.ssh_key_id            AS ssh_key_id,
+        d.ip_address            AS ip_address,
+        n.id                    AS network_id,
+        LEFT(n.id::text, 8)     AS network_prefix,
+        dom.id                  AS domain_id
+      FROM devices d
+      JOIN networks n   ON n.id = d.network_id
+      JOIN domains  dom ON dom.id = n.domain_id
+      WHERE dom.pki_zone IS NOT NULL
+        AND d.ip_address IS NOT NULL
+
+  - id: log_candidates
+    type: io.kestra.plugin.core.log.Log
+    message: "ssh-ca-renewal: {{ outputs.query_candidates.size }} renewal candidate device(s) found."
+
+  # One subflow execution per candidate. concurrencyLimit 1 keeps this gentle
+  # (one gateway/subflow at a time) — a daily fleet sweep has no latency
+  # requirement. transmitFailed: false on the Subflow task below is what makes
+  # a single device's SSH failure NOT fail this whole ssh-ca-renewal execution
+  # (expected/normal — an offline gateway shouldn't block the rest of the
+  # fleet); each child execution's own status is still fully visible in the
+  # Kestra UI (namespace iotgw-ng, flow provisioning), and counted in
+  # `count_failures` below (AC#4).
+  - id: renew_each_device
+    type: io.kestra.plugin.core.flow.ForEach
+    values: "{{ outputs.query_candidates.rows }}"
+    concurrencyLimit: 1
+    tasks:
+      - id: trigger_provisioning
+        type: io.kestra.plugin.core.flow.Subflow
+        namespace: iotgw-ng
+        flowId: provisioning
+        wait: true
+        transmitFailed: false
+        inputs:
+          # `provisioning`'s `json_data` input is type JSON (Flow.yaml); a
+          # native nested map is accepted directly (JsonInput has no string
+          # coercion requirement — core/.../flows/input/JsonInput.java, kestra
+          # v1.3.35). Wire format verified against tasks/ssh_ca.yaml: device_id
+          # = "<name>@<first 8 chars of network uuid>" (computed in SQL as
+          # network_prefix — LEFT(n.id::text,8) — so no string-slicing needed
+          # in Pebble), and totp_counter/ssh_key_id/device_uuid/network_id/
+          # domain_id/iotgw_ssh_ca_base_url match exactly what ssh_ca.yaml
+          # consumes.
+          #
+          # IMPORTANT (verified empirically, kestra v1.3.35): TaskRun.value is
+          # typed String (core/.../executions/TaskRun.java), so when a ForEach
+          # iterates over a list of OBJECTS (not plain strings/numbers),
+          # `taskrun.value` inside a direct child task is the JSON-SERIALIZED
+          # row, not a navigable map — `taskrun.value.ip_address` fails with
+          # "Unable to find `ip_address`". `fromJson(taskrun.value)` (Kestra
+          # Pebble function, core/.../pebble/functions/FromJsonFunction.java)
+          # parses it back into a map before dot-access.
+          json_data:
+            target_ip: "{{ fromJson(taskrun.value).ip_address }}"
+            ssh_key_id: "{{ fromJson(taskrun.value).ssh_key_id | default('') }}"
+            device_id: "{{ fromJson(taskrun.value).device_name }}@{{ fromJson(taskrun.value).network_prefix }}"
+            device_uuid: "{{ fromJson(taskrun.value).device_id }}"
+            network_id: "{{ fromJson(taskrun.value).network_id }}"
+            domain_id: "{{ fromJson(taskrun.value).domain_id }}"
+            totp_counter: "{{ fromJson(taskrun.value).totp_counter }}"
+            iotgw_ssh_ca_base_url: "http://kong.supabase-app.svc.cluster.local:8000"
+            __tags__:
+              - ssh_ca
+
+  # AC#4 — per-device Subflow failures are already visible as individual
+  # child-execution states in the Kestra UI (transmitFailed: false above keeps
+  # them from aborting this run, but each child keeps its own real state).
+  # This task adds a run-level health summary so an operator doesn't have to
+  # open every child execution to know if the run was clean.
+  # io.kestra.plugin.kestra.executions.Count (this instance's replacement for
+  # the deprecated io.kestra.plugin.core.execution.Count, verified via GET
+  # /api/v1/plugins/io.kestra.plugin.kestra.executions.Count) counts this
+  # execution's own `provisioning` child executions that ended FAILED since
+  # this run started. `auth.username/password` are required because
+  # `kestraUrl` defaults to http://localhost:8080 (same pod, standalone
+  # server) which still sits behind this instance's basic auth.
+  - id: count_failures
+    type: io.kestra.plugin.kestra.executions.Count
+    namespaces:
+      - iotgw-ng
+    flowId: provisioning
+    states:
+      - FAILED
+    startDate: "{{ execution.startDate }}"
+    endDate: "{{ now() }}"
+    auth:
+      username: "{{ kv('KESTRA_API_USERNAME') }}"
+      password: "{{ kv('KESTRA_API_PASSWORD') }}"
+
+  - id: renewal_summary
+    type: io.kestra.plugin.core.log.Log
+    message:
+      - "ssh-ca-renewal run summary:"
+      - "  candidates processed : {{ outputs.query_candidates.size }}"
+      - "  child executions FAILED : {{ outputs.count_failures.count }}"
+      - "See the Kestra UI (namespace iotgw-ng, flow provisioning) for per-device detail — a FAILED count > 0 here is expected for offline/unreachable gateways and is not itself a bug."
