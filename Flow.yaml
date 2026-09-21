@@ -111,6 +111,11 @@ tasks:
               git clone --depth 1 https://github.com/i40sys/iotgw-kestra /tmp/nsrepo
               cp -a /tmp/nsrepo/. .
               rm -rf .git /tmp/nsrepo
+              # SSH-CA enrollment (tasks/ssh_ca.yaml) encrypts the TOTP envelope and
+              # POSTs it to the ssh-ca edge function from the CONTROLLER (delegate_to
+              # localhost = this pod). cytopia/ansible:latest-tools (Alpine) ships
+              # neither openssl nor curl, so add them before the playbook runs.
+              apk add --no-cache openssl curl
               pip install passlib
               mkdir -p /etc/ansible/collections /etc/ansible/roles
               ansible-galaxy collection install community.docker -p /etc/ansible/collections
