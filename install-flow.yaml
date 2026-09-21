@@ -30,15 +30,6 @@ tasks:
           # to verify against until after enrollment (Flow.yaml/ssh_ca).
           ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
 
-  - id: stage_namespace_files
-    # Download all namespace files (playbooks, tasks, templates, files/, keys/) so they
-    # are available inside the Kubernetes pod via PodCreate inputFiles injection.
-    # Previously handled automatically by `namespaceFiles: enabled: true` in the Docker runner.
-    type: io.kestra.plugin.core.namespace.DownloadFiles
-    namespace: iotgw-ng
-    files:
-      - "**"
-
   - id: run_install
     type: io.kestra.plugin.kubernetes.core.PodCreate
     # No `connection` block: uses in-cluster service account.
@@ -51,16 +42,14 @@ tasks:
       labels:
         app.kubernetes.io/managed-by: kestra
         kestra.io/flow: install
-    # task-065: PodCreate (PluginUtilsService.validFilename) rejects inputFiles
-    # keys with a leading '/', which DownloadFiles emits for every namespace
-    # file. Rebuild the map as JSON: strip the leading '/' from each key
-    # (replace ^/ with regexp=true) and skip the synced .git/ blob (its binary
-    # pack needlessly bloats the per-file fileSidecar upload). Merge inventory.yml.
-    inputFiles: |
-      {
-      {% for key in outputs.stage_namespace_files.files | keys %}{% if (key | split('/'))[1] != '.git' %}  {{ (key | replace({'^/': ''}, regexp=true)) | json }}: {{ outputs.stage_namespace_files.files[key] | json }},
-      {% endif %}{% endfor %}  "inventory.yml": {{ outputs.create_inventory_file.value | json }}
-      }
+    # task-065 residual fix: injecting all namespace files as individual
+    # inputFiles (one exec/tar stream each into the busybox init-files
+    # container) took minutes on kind/WSL2 — file COUNT, not bytes, is the
+    # bottleneck. Instead we inject only the tiny runtime-generated
+    # inventory.yml here and `git clone` the (public) namespace repo straight
+    # into the pod's workingDir in the container command below.
+    inputFiles:
+      inventory.yml: "{{ outputs.create_inventory_file.value }}"
     spec:
       restartPolicy: Never
       containers:
@@ -83,6 +72,14 @@ tasks:
             - -c
             - |
               set -e
+              # task-065 residual fix: clone the (public) namespace repo straight into
+              # the pod's workingDir instead of injecting its files as inputFiles (see
+              # Flow.yaml for the full rationale). Runs before anything else so
+              # d01_install_owrt.yml / fetch_kms_key.py are present; inventory.yml is
+              # injected via inputFiles (not in the repo) so this cannot clobber it.
+              git clone --depth 1 https://github.com/i40sys/iotgw-kestra /tmp/nsrepo
+              cp -a /tmp/nsrepo/. .
+              rm -rf .git /tmp/nsrepo
               if [ -n "$SSH_KEY_ID" ]; then
                 echo "Fetching device SSH key $SSH_KEY_ID from Cosmian KMS over the in-cluster FQDN..."
                 python3 fetch_kms_key.py
