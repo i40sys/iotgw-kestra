@@ -45,17 +45,6 @@ tasks:
             -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
             -W %h:%p -q root@{{ kv('VPN_JUMP_HOST') }}"
 
-  - id: stage_namespace_files
-    # Download all namespace files into Kestra internal storage so they can be
-    # injected as inputFiles into the Kubernetes pod via PodCreate.
-    # In the Docker-runner era this was handled automatically by
-    # `namespaceFiles: enabled: true`; PodCreate has no equivalent, so we
-    # replicate it with an explicit DownloadFiles step.
-    type: io.kestra.plugin.core.namespace.DownloadFiles
-    namespace: iotgw-ng
-    files:
-      - "**"
-
   - id: iotgw_deployment
     type: io.kestra.plugin.kubernetes.core.PodCreate
     # No `connection` block: uses in-cluster service account.
@@ -68,19 +57,15 @@ tasks:
       labels:
         app.kubernetes.io/managed-by: kestra
         kestra.io/flow: provisioning
-    # inputFiles accepts a Map<String,String> where value is either inline content or a Kestra URI.
-    # We merge the dynamic namespace-files map with the runtime-generated inventory.
-    # Pebble renders `outputs.stage_namespace_files.files` to the Map<path,URI> produced by DownloadFiles.
-    # task-065: PodCreate (PluginUtilsService.validFilename) rejects inputFiles
-    # keys with a leading '/', which DownloadFiles emits for every namespace
-    # file. Rebuild the map as JSON: strip the leading '/' from each key
-    # (replace ^/ with regexp=true) and skip the synced .git/ blob (its binary
-    # pack needlessly bloats the per-file fileSidecar upload). Merge inventory.yml.
-    inputFiles: |
-      {
-      {% for key in outputs.stage_namespace_files.files | keys %}{% if (key | split('/'))[1] != '.git' %}  {{ (key | replace({'^/': ''}, regexp=true)) | json }}: {{ outputs.stage_namespace_files.files[key] | json }},
-      {% endif %}{% endfor %}  "inventory.yml": {{ outputs.create_inventory_file.value | json }}
-      }
+    # task-065 residual fix: injecting all 137 namespace files as individual
+    # inputFiles (one exec/tar stream each into the busybox init-files
+    # container) took ~9m41s on kind/WSL2 — file COUNT, not bytes, is the
+    # bottleneck. Instead we inject only the tiny runtime-generated
+    # inventory.yml here and `git clone` the (public) namespace repo straight
+    # into the pod's workingDir in the container command below — one network
+    # op instead of 137 tiny execs, and it always runs HEAD of main.
+    inputFiles:
+      inventory.yml: "{{ outputs.create_inventory_file.value }}"
     spec:
       restartPolicy: Never
       containers:
@@ -114,6 +99,18 @@ tasks:
             - -c
             - |
               set -e
+              # task-065 residual fix: clone the (public) namespace repo straight into
+              # the pod's workingDir instead of injecting its 137 files as inputFiles
+              # (each one was a separate exec/tar stream into the init-files
+              # container — ~9m41s on kind/WSL2 for file COUNT alone, not bytes).
+              # This one clone always pulls HEAD of main and keeps the runner in
+              # sync with the repo, per the existing sync-namespace-files pattern.
+              # Runs before anything else so fetch_kms_key.py / playbooks / tasks
+              # are present; inventory.yml is injected via inputFiles (not in the
+              # repo) so this clone+copy cannot clobber it.
+              git clone --depth 1 https://github.com/i40sys/iotgw-kestra /tmp/nsrepo
+              cp -a /tmp/nsrepo/. .
+              rm -rf .git /tmp/nsrepo
               pip install passlib
               mkdir -p /etc/ansible/collections /etc/ansible/roles
               ansible-galaxy collection install community.docker -p /etc/ansible/collections
