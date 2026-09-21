@@ -53,6 +53,15 @@
     ssh_ca_renew_margin_seconds: "{{ ssh_ca_renew_margin_seconds | default(2592000) }}"
   tags: [ssh_ca]
 
+# The backend packs `iotgw_ssh_ca_base_url` (the Kong base, no path); build the
+# full edge-function endpoint from it unless a caller passed ssh_ca_endpoint
+# whole. Keeps manual/standalone runs (which may set ssh_ca_endpoint directly)
+# working while the Kestra-driven path only sends the base URL.
+- name: "ssh_ca: resolve the ssh-ca endpoint"
+  ansible.builtin.set_fact:
+    ssh_ca_endpoint: "{{ ssh_ca_endpoint | default((iotgw_ssh_ca_base_url | regex_replace('/+$', '')) ~ '/functions/v1/ssh-ca') }}"
+  tags: [ssh_ca]
+
 - name: "ssh_ca: ensure an ecdsa-P256 host key exists (private half never leaves)"
   ansible.builtin.command:
     cmd: ssh-keygen -q -t ecdsa -b 256 -N "" -f /etc/ssh/ssh_host_ecdsa_key -C "{{ inventory_hostname }}"
@@ -125,6 +134,42 @@
   when: needs_enroll
   tags: [ssh_ca]
   block:
+    # Derive the current device TOTP on the controller — it is the AES pass for
+    # the enrollment envelope. The backend packs identifiers only (device_uuid /
+    # network_id / domain_id / totp_counter), NOT the code; ssh-ca derives the
+    # same secret `<domain>-<network>-<device>-<counter>` and matches within ±1
+    # step (decision-009; _shared/device-auth.ts). Computed here, right before
+    # the POST, because the code is only valid for a 600 s window. A caller that
+    # already supplied enroll_totp (a manual/standalone run) keeps it.
+    - name: "ssh_ca: derive the current device TOTP (controller-side)"
+      when: enroll_totp is not defined or not enroll_totp
+      delegate_to: localhost
+      ansible.builtin.command:
+        argv:
+          - python3
+          - -c
+          - |
+            import hmac, hashlib, struct, time, sys
+            domain, network, dev, ctr = sys.argv[1:5]
+            secret = f"{domain}-{network}-{dev}-{ctr}".encode()
+            step = int(time.time()) // 600
+            h = hmac.new(secret, struct.pack(">Q", step), hashlib.sha1).digest()
+            o = h[-1] & 0x0f
+            b = ((h[o] & 0x7f) << 24) | ((h[o+1] & 0xff) << 16) | ((h[o+2] & 0xff) << 8) | (h[o+3] & 0xff)
+            print(str(b % 1000000).zfill(6))
+          - "{{ domain_id }}"
+          - "{{ network_id }}"
+          - "{{ device_uuid }}"
+          - "{{ totp_counter | default(0) | string }}"
+      register: totp_out
+      changed_when: false
+      no_log: true
+
+    - name: "ssh_ca: set enroll_totp fact"
+      ansible.builtin.set_fact:
+        enroll_totp: "{{ enroll_totp | default(totp_out.stdout | trim) }}"
+      no_log: true
+
     - name: "ssh_ca: write the enrollment request JSON (controller-side, transient)"
       delegate_to: localhost
       vars:
