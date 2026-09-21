@@ -98,6 +98,17 @@ tasks:
                 secretKeyRef:
                   name: kms-auth
                   key: KMS_AUTH_TOKEN
+            # SSH-CA enrollment (task-105): the anon JWT is only the Kong gateway
+            # credential — the PKI fleet token lives in the ssh-ca edge function and
+            # never comes near this pod. `optional: true` keeps a cluster without the
+            # `supabase-anon` Secret bootable for non-ssh_ca provisions; the ssh_ca
+            # path guards on it below and fails fast rather than 401-ing at Kong.
+            - name: SUPABASE_ANON_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: supabase-anon
+                  key: ANON_KEY
+                  optional: true
           command:
             - /bin/bash
             - -c
@@ -120,9 +131,20 @@ tasks:
                 echo "No ssh_key_id provided — skipping KMS fetch."
               fi
               chmod 600 keys/id_rsa
+              # Fail fast (task-105 AC#3): when the ssh_ca path will run (full
+              # playbook or an explicit ssh_ca tag) the Kong route needs the anon
+              # JWT — a missing/empty supabase-anon Secret must error here, not as a
+              # silent 401 deep inside enrollment.
+              TAGS='{{ inputs.json_data.__tags__ | default([]) | join(",") }}'
+              if [ -z "$TAGS" ] || echo ",$TAGS," | grep -q ',ssh_ca,'; then
+                if [ -z "$SUPABASE_ANON_KEY" ]; then
+                  echo "ERROR: ssh_ca enrollment needs SUPABASE_ANON_KEY, but it is empty — create the 'supabase-anon' Secret in the kestra namespace (task-105)." >&2
+                  exit 1
+                fi
+              fi
               {% if inputs.json_data.__tags__ is defined and inputs.json_data.__tags__ | length > 0 %}
-              ansible-playbook -i inventory.yml i11_provisioning_iotgw.yaml -e '{{ inputs.json_data | json }}' --tags '{{ inputs.json_data.__tags__ | join(",") }}'
+              ansible-playbook -i inventory.yml i11_provisioning_iotgw.yaml -e '{{ inputs.json_data | json }}' -e supabase_anon_key="$SUPABASE_ANON_KEY" --tags '{{ inputs.json_data.__tags__ | join(",") }}'
               {% else %}
-              ansible-playbook -i inventory.yml i11_provisioning_iotgw.yaml -e '{{ inputs.json_data | json }}'
+              ansible-playbook -i inventory.yml i11_provisioning_iotgw.yaml -e '{{ inputs.json_data | json }}' -e supabase_anon_key="$SUPABASE_ANON_KEY"
               {% endif %}
           workingDir: "{{ workingDir }}"

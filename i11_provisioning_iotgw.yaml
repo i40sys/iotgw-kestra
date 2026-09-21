@@ -18,6 +18,15 @@
     - import_tasks: tasks/system.yaml
       tags: system
 
+    # SSH-CA enrollment (iotgw-ng decision-026 phase 3/6). Purely additive on the
+    # gateway — it only writes under /etc/ssh and never touches authorized_keys,
+    # so it cannot lock us out. Its tasks no-op unless the flow supplies the
+    # enrollment vars (ssh_ca_endpoint / device_id / enroll_totp; supabase_anon_key
+    # for the Kong route). Run it standalone against an already-deployed gateway
+    # with `--tags ssh_ca` to migrate existing hardware (task-106).
+    - import_tasks: tasks/ssh_ca.yaml
+      tags: ssh_ca
+
     - import_tasks: tasks/firewall.yaml
       tags: firewall
 
