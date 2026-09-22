@@ -7,19 +7,17 @@ triggers:
     cron: "0 */6 * * *"
 
 inputs:
-  - id: target_ip
-    type: STRING
-    description: "IP address of the gateway to check."
-    defaults: "0.0.0.0"
-  - id: ssh_key_id
-    type: STRING
-    required: true
+  - id: json_data
+    type: JSON
     description: >-
-      KMS object id of the device SSH key (KMIP UniqueIdentifier,
-      e.g. device_ssh_<deviceId>). When set, the runner pod fetches the
-      private key from Cosmian KMS into keys/id_rsa (task-069). Empty for
-      the scheduled cron run (which has no device identity).
-    defaults: ""
+      Per-device connectivity-check payload from the backend (task-092):
+      target_ip, device_id, device_name, pki_zone (the domain's pki-manager
+      zone, used to mint the short-lived iotgw-ops SSH user certificate that
+      replaces the per-device KMS key as the SSH auth mechanism, AC#4).
+      Defaults give the scheduled cron run — which has no device identity —
+      a dummy 0.0.0.0 target and an empty zone (the runner pod then skips the
+      cert mint and lets the SSH step fail naturally).
+    defaults: '{"target_ip": "0.0.0.0", "device_id": "", "device_name": "", "pki_zone": ""}'
   - id: cert_fqdn
     type: STRING
     description: >-
@@ -51,11 +49,14 @@ tasks:
     format: |
       all:
         hosts:
-          {{ inputs.target_ip }}:
+          {{ inputs.json_data.target_ip }}:
         vars:
           ansible_user: 'root'
           ansible_python_interpreter: /usr/bin/python3
-          ansible_ssh_private_key_file: "keys/id_rsa"
+          # task-092 part 2b: the short-lived iotgw-ops USER CERTIFICATE minted
+          # in-pod (see the command block below) replaces the per-device KMS key
+          # (keys/id_rsa) as the SSH credential.
+          ansible_ssh_private_key_file: "/tmp/ops_key"
       {% if inputs.cert_fqdn != '' and inputs.pki_host_ca_id != '' %}
           # TASK-093: this flow runs against a PROVISIONED+ENROLLED gateway, so it
           # VERIFIES the host certificate instead of TOFU. The pod fetched the
@@ -69,12 +70,12 @@ tasks:
           # negotiate a plain host key the known_hosts has no entry for → verification
           # fails; with it, a gateway that presents no cert fails to negotiate at all
           # (which is the correct "cert absent → fail" behaviour, task-093 AC#1).
-          ansible_ssh_common_args: '-o StrictHostKeyChecking=yes -o UserKnownHostsFile=keys/known_hosts -o GlobalKnownHostsFile=/dev/null -o HostKeyAlias={{ inputs.cert_fqdn }} -o HostKeyAlgorithms=ecdsa-sha2-nistp256-cert-v01@openssh.com'
+          ansible_ssh_common_args: '-o StrictHostKeyChecking=yes -o UserKnownHostsFile=keys/known_hosts -o GlobalKnownHostsFile=/dev/null -o HostKeyAlias={{ inputs.cert_fqdn }} -o HostKeyAlgorithms=ecdsa-sha2-nistp256-cert-v01@openssh.com -o CertificateFile=/tmp/ops_key-cert.pub'
       {% else %}
           # No cert material supplied (the scheduled cron has no device identity)
           # → Trust-On-First-Use. A per-device run passes cert_fqdn + pki_host_ca_id
           # so the branch above runs and verifies the host certificate (task-093).
-          ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+          ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o CertificateFile=/tmp/ops_key-cert.pub'
       {% endif %}
 
   - id: run_connectivity_check
@@ -101,19 +102,18 @@ tasks:
       containers:
         - name: ansible
           image: cytopia/ansible:latest-tools
-          # task-069: fetch the per-device SSH key from Cosmian KMS in-pod.
-          # SSH_KEY_ID is a non-secret KMIP object id (safe to inline from the
-          # flow input). KMS_AUTH_TOKEN is the task-057 bearer token, mounted
-          # from the kms-auth Secret (bridged into the kestra namespace) via
-          # secretKeyRef — never inlined.
           env:
-            - name: SSH_KEY_ID
-              value: "{{ inputs.ssh_key_id }}"
-            - name: KMS_AUTH_TOKEN
+            # task-092 part 2b: short-lived iotgw-ops SSH USER CERTIFICATE, minted
+            # by the iotgw-ui backend's internal /ssh/ops-cert endpoint, replaces
+            # the per-device KMS key (keys/id_rsa) as the SSH auth mechanism for
+            # this flow (AC#4 — no more KMS-fetch-to-keys/id_rsa block). NOT
+            # optional: a missing Secret fails the pod at creation
+            # (CreateContainerConfigError) rather than silently having no token.
+            - name: OPS_CERT_MINT_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: kms-auth
-                  key: KMS_AUTH_TOKEN
+                  name: ops-cert-mint
+                  key: OPS_CERT_MINT_TOKEN
             # task-093: non-secret host-verification context (public pki route +
             # certified FQDN). Both empty on the scheduled cron run → TOFU.
             - name: PKI_HOST_CA_ID
@@ -135,13 +135,28 @@ tasks:
               git clone --depth 1 https://github.com/i40sys/iotgw-kestra /tmp/nsrepo
               cp -a /tmp/nsrepo/. .
               rm -rf .git /tmp/nsrepo
-              if [ -n "$SSH_KEY_ID" ]; then
-                echo "Fetching device SSH key $SSH_KEY_ID from Cosmian KMS over the in-cluster FQDN..."
-                python3 fetch_kms_key.py
-              else
-                echo "No ssh_key_id provided (scheduled run) — skipping KMS fetch."
+              # task-092 part 2b: mint a short-lived iotgw-ops SSH USER CERTIFICATE
+              # from the iotgw-ui backend instead of fetching a per-device key from
+              # KMS — keys/id_rsa is no longer the SSH auth path (AC#4).
+              # cytopia/ansible:latest-tools (Alpine) ships neither openssl nor curl.
+              apk add --no-cache openssl curl
+              ssh-keygen -q -t ed25519 -N '' -f /tmp/ops_key -C iotgw-ops
+              ZONE='{{ inputs.json_data.pki_zone | default("") }}'
+              if [ -z "$OPS_CERT_MINT_TOKEN" ]; then
+                echo "ERROR: OPS_CERT_MINT_TOKEN is empty — populate the 'ops-cert-mint' Secret in the kestra namespace (task-092)." >&2
+                exit 1
               fi
-              chmod 600 keys/id_rsa
+              if [ -n "$ZONE" ]; then
+                echo "Minting a short-lived iotgw-ops SSH user certificate for zone $ZONE..."
+                curl -fsS -X POST http://iotgw-ui-backend.iotgw-ui.svc.cluster.local:4444/internal/ssh/ops-cert \
+                  -H "Authorization: Bearer $OPS_CERT_MINT_TOKEN" -H "Content-Type: application/json" \
+                  -d "{\"zone\":\"$ZONE\",\"sshPublicKey\":\"$(cat /tmp/ops_key.pub)\"}" \
+                  | python3 -c 'import sys,json;open("/tmp/ops_key-cert.pub","w").write(json.load(sys.stdin)["certificate"])'
+                chmod 600 /tmp/ops_key
+                echo "iotgw-ops certificate minted: $(ssh-keygen -L -f /tmp/ops_key-cert.pub | head -3)"
+              else
+                echo "No json_data.pki_zone provided (scheduled run or unmigrated domain) — skipping iotgw-ops cert mint; SSH will present an uncertified ephemeral key and is expected to fail authentication."
+              fi
               # task-093: build the @cert-authority known_hosts so the gateway's
               # HOST certificate is verified (no TOFU). The Host CA public key comes
               # from the PUBLIC, id-addressed pki route (no auth, same as trust.sh);

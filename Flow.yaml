@@ -25,7 +25,12 @@ tasks:
         vars:
           ansible_user: 'root'
           ansible_python_interpreter: /usr/bin/python3
-          ansible_ssh_private_key_file: "keys/id_rsa"
+          # task-092 part 2b: the short-lived iotgw-ops USER CERTIFICATE minted
+          # in-pod (see the command block below) replaces the per-device KMS key
+          # (keys/id_rsa) as the SSH credential for BOTH hops below.
+          # CertificateFile is set explicitly even though ssh auto-loads a
+          # same-named "-cert.pub" next to the private key, for clarity.
+          ansible_ssh_private_key_file: "/tmp/ops_key"
           # HOST-VERIFICATION POSTURE (task-093):
           # - Gateway hop (first -o pair): TOFU today. Provisioning is where the
           #   gateway ENROLLS (ssh_ca), so its first connection is pre-certificate.
@@ -39,10 +44,15 @@ tasks:
           #   so it cannot be verified this way. ACCEPTED DECISION (task-093 AC#3):
           #   keep TOFU for the bastion, documented here; revisit by pinning its
           #   host key or issuing it a cert if the jump host ever becomes ours.
+          # - USER-cert trust (task-092): the SAME cert authenticates both hops
+          #   ONLY once the bastion trusts the domain's User CA
+          #   (TrustedUserCAKeys) — a documented OPERATOR step on the bastion's
+          #   sshd config, NOT configured by this flow.
           ansible_ssh_common_args: >-
             -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
-            -o ProxyCommand="ssh -i keys/id_rsa -o IdentitiesOnly=yes
-            -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+            -o CertificateFile=/tmp/ops_key-cert.pub
+            -o ProxyCommand="ssh -i /tmp/ops_key -o CertificateFile=/tmp/ops_key-cert.pub
+            -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
             -W %h:%p -q root@{{ kv('VPN_JUMP_HOST') }}"
 
   - id: iotgw_deployment
@@ -71,18 +81,18 @@ tasks:
       containers:
         - name: ansible
           image: cytopia/ansible:latest-tools
-          # task-069: fetch the per-device SSH key from Cosmian KMS in-pod.
-          # SSH_KEY_ID (non-secret KMIP object id) comes from the backend-packed
-          # json_data.ssh_key_id; KMS_AUTH_TOKEN (task-057 bearer) is mounted
-          # from the kms-auth Secret via secretKeyRef — never inlined.
           env:
-            - name: SSH_KEY_ID
-              value: "{{ inputs.json_data.ssh_key_id }}"
-            - name: KMS_AUTH_TOKEN
+            # task-092 part 2b: short-lived iotgw-ops SSH USER CERTIFICATE, minted
+            # by the iotgw-ui backend's internal /ssh/ops-cert endpoint, replaces
+            # the per-device KMS key (keys/id_rsa) as the SSH auth mechanism for
+            # this flow (AC#4 — no more KMS-fetch-to-keys/id_rsa block). NOT
+            # optional: a missing Secret fails the pod at creation
+            # (CreateContainerConfigError) rather than silently having no token.
+            - name: OPS_CERT_MINT_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: kms-auth
-                  key: KMS_AUTH_TOKEN
+                  name: ops-cert-mint
+                  key: OPS_CERT_MINT_TOKEN
             # SSH-CA enrollment (task-105): the anon JWT is only the Kong gateway
             # credential — the PKI fleet token lives in the ssh-ca edge function and
             # never comes near this pod. `optional: true` keeps a cluster without the
@@ -126,13 +136,34 @@ tasks:
               roles_path = /etc/ansible/roles:~/.ansible/roles:/usr/share/ansible/roles
               collections_paths = /etc/ansible/collections:~/.ansible/collections:/usr/share/ansible/collections
               ANSIBLECFG
-              if [ -n "$SSH_KEY_ID" ]; then
-                echo "Fetching device SSH key $SSH_KEY_ID from Cosmian KMS over the in-cluster FQDN..."
-                python3 fetch_kms_key.py
-              else
-                echo "No ssh_key_id provided — skipping KMS fetch."
+              # task-092 part 2b: mint a short-lived iotgw-ops SSH USER CERTIFICATE
+              # from the iotgw-ui backend instead of fetching a per-device key from
+              # KMS — keys/id_rsa is no longer the SSH auth path (AC#4). The
+              # backend packs the domain's pki-manager zone into
+              # json_data.pki_zone. OPS_CERT_MINT_TOKEN itself is guaranteed
+              # present (non-optional secretKeyRef above); an empty pki_zone
+              # (domain not yet migrated, or the scheduled/no-identity path on
+              # other flows) is NOT a hard failure here — we skip the mint and
+              # let the SSH step fail naturally on the uncertified ephemeral key,
+              # same "no personal-key fallback" outcome, just surfaced at the
+              # ansible layer instead of bash.
+              ssh-keygen -q -t ed25519 -N '' -f /tmp/ops_key -C iotgw-ops
+              ZONE='{{ inputs.json_data.pki_zone | default("") }}'
+              if [ -z "$OPS_CERT_MINT_TOKEN" ]; then
+                echo "ERROR: OPS_CERT_MINT_TOKEN is empty — populate the 'ops-cert-mint' Secret in the kestra namespace (task-092)." >&2
+                exit 1
               fi
-              chmod 600 keys/id_rsa
+              if [ -n "$ZONE" ]; then
+                echo "Minting a short-lived iotgw-ops SSH user certificate for zone $ZONE..."
+                curl -fsS -X POST http://iotgw-ui-backend.iotgw-ui.svc.cluster.local:4444/internal/ssh/ops-cert \
+                  -H "Authorization: Bearer $OPS_CERT_MINT_TOKEN" -H "Content-Type: application/json" \
+                  -d "{\"zone\":\"$ZONE\",\"sshPublicKey\":\"$(cat /tmp/ops_key.pub)\"}" \
+                  | python3 -c 'import sys,json;open("/tmp/ops_key-cert.pub","w").write(json.load(sys.stdin)["certificate"])'
+                chmod 600 /tmp/ops_key
+                echo "iotgw-ops certificate minted: $(ssh-keygen -L -f /tmp/ops_key-cert.pub | head -3)"
+              else
+                echo "No json_data.pki_zone provided — skipping iotgw-ops cert mint; SSH will present an uncertified ephemeral key and is expected to fail authentication."
+              fi
               # Fail fast (task-105 AC#3): when the ssh_ca path will run (full
               # playbook or an explicit ssh_ca tag) the Kong route needs the anon
               # JWT — a missing/empty supabase-anon Secret must error here, not as a
