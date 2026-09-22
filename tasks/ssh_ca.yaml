@@ -170,10 +170,46 @@
         enroll_totp: "{{ enroll_totp | default(totp_out.stdout | trim) }}"
       no_log: true
 
+    # PROOF-OF-CONTINUITY (task-075 / decision-028 §12): if this device already
+    # has a host certificate, this is a RE-enroll — the ssh-ca edge function will
+    # demand proof of possession of the existing host key. Sign the challenge
+    # `<device_id>\n<normalized new host_pubkey>\n<TOTP>` with the EXISTING host
+    # private key ON THE GATEWAY (it never leaves the box; no delegate_to). A
+    # first enroll (no prior cert) skips this — the edge fn then treats it as
+    # one-shot. Key rotation (deleting the old key) intentionally cannot prove
+    # continuity and must go through offboard + re-provision.
+    - name: "ssh_ca: sign the re-enroll continuity challenge with the existing host key"
+      when: cert_stat.stat.exists
+      ansible.builtin.shell:
+        cmd: |
+          set -euo pipefail
+          norm="$(printf '%s' {{ host_pubkey | quote }} | awk '{print $1" "$2}')"
+          ch="$(mktemp)"
+          printf '%s\n%s\n%s' {{ device_id | quote }} "$norm" {{ enroll_totp | quote }} > "$ch"
+          ssh-keygen -Y sign -f /etc/ssh/ssh_host_ecdsa_key -n iotgw-reenroll "$ch" >/dev/null 2>&1
+          cat "$ch.sig"
+          rm -f "$ch" "$ch.sig"
+        executable: /bin/bash
+      register: continuity_out
+      changed_when: false
+      no_log: true
+
+    - name: "ssh_ca: set continuity_sig fact (re-enroll only)"
+      when: cert_stat.stat.exists
+      ansible.builtin.set_fact:
+        continuity_sig: "{{ continuity_out.stdout }}"
+      no_log: true
+
     - name: "ssh_ca: write the enrollment request JSON (controller-side, transient)"
       delegate_to: localhost
       vars:
-        enroll_body: '{"device_id":"{{ device_id }}","action":"enroll","host_pubkey":"{{ host_pubkey }}"}'
+        enroll_body: >-
+          {{
+            {'device_id': device_id, 'action': 'enroll', 'host_pubkey': host_pubkey}
+            | combine({'continuity_sig': continuity_sig}
+                      if (continuity_sig is defined and continuity_sig) else {})
+            | to_json
+          }}
       ansible.builtin.copy:
         content: "{{ enroll_body }}"
         dest: "/tmp/ssh_ca_req.{{ inventory_hostname }}.json"
