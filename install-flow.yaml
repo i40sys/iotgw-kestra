@@ -22,13 +22,27 @@ tasks:
         vars:
           ansible_user: 'root'
           ansible_python_interpreter: /usr/bin/python3
-          ansible_ssh_private_key_file: "keys/id_rsa"
+          # task-092 part 2b: the short-lived iotgw-ops USER CERTIFICATE minted
+          # in-pod (see the command block below) replaces the per-device KMS key
+          # (keys/id_rsa) as the SSH credential.
+          #
+          # NEEDS A HUMAN (operator step, task-092): unlike an already-enrolled
+          # gateway, the LIVE-BOOTED rescue environment this flow targets has
+          # never run ssh_ca and has no TrustedUserCAKeys — its sshd only trusts
+          # whatever public key was baked into the live-boot media's
+          # authorized_keys at build time (historically the same per-device KMS
+          # key this change removes as the CONTROLLER's credential). For this hop
+          # to keep working on REAL hardware, the live-boot image/USB/PXE artifact
+          # must be updated to trust the domain's User CA (or be seeded with the
+          # iotgw-ops public key) — the same class of operator prerequisite as
+          # the bastion TrustedUserCAKeys note in Flow.yaml. Not configured here.
+          ansible_ssh_private_key_file: "/tmp/ops_key"
           # TOFU IS INTENTIONAL HERE (task-093 AC#4): this flow installs the OS
           # onto a LIVE-booted machine that has no host certificate yet — the
           # live-boot phase keeps Trust-On-First-Use until decision-028 §5 is
           # resolved. Do NOT switch this to cert verification; there is nothing
           # to verify against until after enrollment (Flow.yaml/ssh_ca).
-          ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+          ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o CertificateFile=/tmp/ops_key-cert.pub'
 
   - id: run_install
     type: io.kestra.plugin.kubernetes.core.PodCreate
@@ -55,18 +69,18 @@ tasks:
       containers:
         - name: ansible
           image: cytopia/ansible:latest-tools
-          # task-069: fetch the per-device SSH key from Cosmian KMS in-pod.
-          # SSH_KEY_ID (non-secret KMIP object id) comes from the backend-packed
-          # json_data.ssh_key_id; KMS_AUTH_TOKEN (task-057 bearer) is mounted
-          # from the kms-auth Secret via secretKeyRef — never inlined.
           env:
-            - name: SSH_KEY_ID
-              value: "{{ inputs.json_data.ssh_key_id }}"
-            - name: KMS_AUTH_TOKEN
+            # task-092 part 2b: short-lived iotgw-ops SSH USER CERTIFICATE, minted
+            # by the iotgw-ui backend's internal /ssh/ops-cert endpoint, replaces
+            # the per-device KMS key (keys/id_rsa) as the SSH auth mechanism for
+            # this flow (AC#4 — no more KMS-fetch-to-keys/id_rsa block). NOT
+            # optional: a missing Secret fails the pod at creation
+            # (CreateContainerConfigError) rather than silently having no token.
+            - name: OPS_CERT_MINT_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: kms-auth
-                  key: KMS_AUTH_TOKEN
+                  name: ops-cert-mint
+                  key: OPS_CERT_MINT_TOKEN
           command:
             - /bin/bash
             - -c
@@ -80,13 +94,28 @@ tasks:
               git clone --depth 1 https://github.com/i40sys/iotgw-kestra /tmp/nsrepo
               cp -a /tmp/nsrepo/. .
               rm -rf .git /tmp/nsrepo
-              if [ -n "$SSH_KEY_ID" ]; then
-                echo "Fetching device SSH key $SSH_KEY_ID from Cosmian KMS over the in-cluster FQDN..."
-                python3 fetch_kms_key.py
-              else
-                echo "No ssh_key_id provided — skipping KMS fetch."
+              # task-092 part 2b: mint a short-lived iotgw-ops SSH USER CERTIFICATE
+              # from the iotgw-ui backend instead of fetching a per-device key from
+              # KMS — keys/id_rsa is no longer the SSH auth path (AC#4).
+              # cytopia/ansible:latest-tools (Alpine) ships neither openssl nor curl.
+              apk add --no-cache openssl curl
+              ssh-keygen -q -t ed25519 -N '' -f /tmp/ops_key -C iotgw-ops
+              ZONE='{{ inputs.json_data.pki_zone | default("") }}'
+              if [ -z "$OPS_CERT_MINT_TOKEN" ]; then
+                echo "ERROR: OPS_CERT_MINT_TOKEN is empty — populate the 'ops-cert-mint' Secret in the kestra namespace (task-092)." >&2
+                exit 1
               fi
-              chmod 600 keys/id_rsa
+              if [ -n "$ZONE" ]; then
+                echo "Minting a short-lived iotgw-ops SSH user certificate for zone $ZONE..."
+                curl -fsS -X POST http://iotgw-ui-backend.iotgw-ui.svc.cluster.local:4444/internal/ssh/ops-cert \
+                  -H "Authorization: Bearer $OPS_CERT_MINT_TOKEN" -H "Content-Type: application/json" \
+                  -d "{\"zone\":\"$ZONE\",\"sshPublicKey\":\"$(cat /tmp/ops_key.pub)\"}" \
+                  | python3 -c 'import sys,json;open("/tmp/ops_key-cert.pub","w").write(json.load(sys.stdin)["certificate"])'
+                chmod 600 /tmp/ops_key
+                echo "iotgw-ops certificate minted: $(ssh-keygen -L -f /tmp/ops_key-cert.pub | head -3)"
+              else
+                echo "No json_data.pki_zone provided — skipping iotgw-ops cert mint; SSH will present an uncertified ephemeral key and is expected to fail authentication."
+              fi
               ansible-playbook -i inventory.yml d01_install_owrt.yml \
                 -e "target_disk={{ inputs.json_data.target_disk }}" \
                 -e "openwrt_version={{ inputs.json_data.openwrt_version }}" \

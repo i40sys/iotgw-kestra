@@ -33,6 +33,12 @@ tasks:
   # 20250824185553_networks_table,20260914000000_add_pki_zone_to_domains}.sql:
   # devices(id, network_id, name, ip_address, totp_counter, ssh_key_id),
   # networks(id, domain_id), domains(id, pki_zone).
+  #
+  # task-092 part 2b: dom.pki_zone is also selected (not just filtered on) so
+  # each renewal's provisioning Subflow can pass it through as
+  # json_data.pki_zone — the runner needs it to mint the short-lived iotgw-ops
+  # SSH user certificate that replaces the per-device KMS key (keys/id_rsa) as
+  # the SSH auth mechanism (AC#4).
   - id: query_candidates
     type: io.kestra.plugin.jdbc.postgresql.Query
     # io.kestra.plugin.jdbc.postgresql.Query, plugin-jdbc-postgres 1.15.5 (this
@@ -52,7 +58,8 @@ tasks:
         d.ip_address            AS ip_address,
         n.id                    AS network_id,
         LEFT(n.id::text, 8)     AS network_prefix,
-        dom.id                  AS domain_id
+        dom.id                  AS domain_id,
+        dom.pki_zone            AS pki_zone
       FROM devices d
       JOIN networks n   ON n.id = d.network_id
       JOIN domains  dom ON dom.id = n.domain_id
@@ -110,6 +117,10 @@ tasks:
             domain_id: "{{ fromJson(taskrun.value).domain_id }}"
             totp_counter: "{{ fromJson(taskrun.value).totp_counter }}"
             iotgw_ssh_ca_base_url: "http://kong.supabase-app.svc.cluster.local:8000"
+            # task-092 part 2b: the domain's pki-manager zone, so the
+            # `provisioning` subflow's runner pod can mint the short-lived
+            # iotgw-ops SSH user certificate (replaces keys/id_rsa, AC#4).
+            pki_zone: "{{ fromJson(taskrun.value).pki_zone | default('') }}"
             __tags__:
               - ssh_ca
 
