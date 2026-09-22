@@ -68,6 +68,19 @@
     line: 'Subsystem sftp internal-sftp'
     backup: yes
 
+# task-098 (decision-027 phase 4): sshd LogLevel VERBOSE fleet-wide so the auth
+# log distinguishes a CERTIFICATE login (`Accepted publickey ... ID <keyid>
+# (serial N) CA <fp>`) from a raw break-glass key (`Accepted publickey ...` with
+# no ID/CA) — the phase-4 "zero raw-key logins for two weeks" gate cannot be
+# evidenced without it. Gated on `sshd -t` so a bad edit never reaches the daemon.
+- name: "system: sshd LogLevel VERBOSE (cert-vs-rawkey auth accounting)"
+  lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: '^#?\s*LogLevel\s+'
+    line: 'LogLevel VERBOSE'
+    validate: '/usr/sbin/sshd -t -f %s'
+    backup: yes
+
 - name: "system: sshd service reload and restart"
   ansible.builtin.shell: |
       /etc/init.d/sshd reload
