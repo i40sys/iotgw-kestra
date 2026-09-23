@@ -57,6 +57,13 @@ tasks:
           # in-pod (see the command block below) replaces the per-device KMS key
           # (keys/id_rsa) as the SSH credential.
           ansible_ssh_private_key_file: "/tmp/ops_key"
+          # BASTION HOP (both branches below): the controller has no L3 route
+          # into the per-network Netmaker/WireGuard subnets, so SSH reaches the
+          # gateway through the Netmaker host {{ kv('VPN_JUMP_HOST') }} as a
+          # ProxyCommand jump — the same hop, and the same bastion TOFU posture
+          # (task-093 AC#3), as Flow.yaml. The bastion must accept the iotgw-ops
+          # user cert — the dedicated `iotgw-jump` account installed by
+          # iotgw-ng scripts/ssh-ca/bastion-trust.sh (decision-030).
       {% if inputs.cert_fqdn != '' and inputs.pki_host_ca_id != '' %}
           # TASK-093: this flow runs against a PROVISIONED+ENROLLED gateway, so it
           # VERIFIES the host certificate instead of TOFU. The pod fetched the
@@ -70,12 +77,12 @@ tasks:
           # negotiate a plain host key the known_hosts has no entry for → verification
           # fails; with it, a gateway that presents no cert fails to negotiate at all
           # (which is the correct "cert absent → fail" behaviour, task-093 AC#1).
-          ansible_ssh_common_args: '-o StrictHostKeyChecking=yes -o UserKnownHostsFile=keys/known_hosts -o GlobalKnownHostsFile=/dev/null -o HostKeyAlias={{ inputs.cert_fqdn }} -o HostKeyAlgorithms=ecdsa-sha2-nistp256-cert-v01@openssh.com -o CertificateFile=/tmp/ops_key-cert.pub'
+          ansible_ssh_common_args: '-o StrictHostKeyChecking=yes -o UserKnownHostsFile=keys/known_hosts -o GlobalKnownHostsFile=/dev/null -o HostKeyAlias={{ inputs.cert_fqdn }} -o HostKeyAlgorithms=ecdsa-sha2-nistp256-cert-v01@openssh.com -o CertificateFile=/tmp/ops_key-cert.pub -o ProxyCommand="ssh -i /tmp/ops_key -o CertificateFile=/tmp/ops_key-cert.pub -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -W %h:%p -q iotgw-jump@{{ kv('VPN_JUMP_HOST') }}"'
       {% else %}
           # No cert material supplied (the scheduled cron has no device identity)
           # → Trust-On-First-Use. A per-device run passes cert_fqdn + pki_host_ca_id
           # so the branch above runs and verifies the host certificate (task-093).
-          ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o CertificateFile=/tmp/ops_key-cert.pub'
+          ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o CertificateFile=/tmp/ops_key-cert.pub -o ProxyCommand="ssh -i /tmp/ops_key -o CertificateFile=/tmp/ops_key-cert.pub -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -W %h:%p -q iotgw-jump@{{ kv('VPN_JUMP_HOST') }}"'
       {% endif %}
 
   - id: run_connectivity_check
@@ -180,6 +187,23 @@ tasks:
                 echo "known_hosts written: @cert-authority $CERT_FQDN <hostCa>"
               else
                 echo "No pki_host_ca_id/cert_fqdn — host verification stays TOFU (scheduled run)."
+              fi
+              # decision-030: ICMP reachability is checked FROM THE NETMAKER HOST
+              # (the bastion) — the controller has no L3 route into the gateway
+              # networks. The jump account's forced command only allows
+              # `ping <IPv4>`. The result is logged as an ICMP_RESULT marker the
+              # iotgw-ui backend parses; a failed ping does not stop the
+              # SSH/Ansible check below (the pod's exit code is Ansible's).
+              if [ -n "$ZONE" ]; then
+                set +e
+                ssh -i /tmp/ops_key -o CertificateFile=/tmp/ops_key-cert.pub -o IdentitiesOnly=yes \
+                  -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
+                  iotgw-jump@{{ kv('VPN_JUMP_HOST') }} 'ping {{ inputs.json_data.target_ip }}'
+                icmp_rc=$?
+                set -e
+                echo "ICMP_RESULT rc=$icmp_rc"
+              else
+                echo "ICMP_RESULT rc=skipped (no pki_zone → no ops cert for the bastion)"
               fi
               ansible-playbook -i inventory.yml connectivity_check.yml
           workingDir: "{{ workingDir }}"
