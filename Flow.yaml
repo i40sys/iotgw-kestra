@@ -53,7 +53,7 @@ tasks:
             -o CertificateFile=/tmp/ops_key-cert.pub
             -o ProxyCommand="ssh -i /tmp/ops_key -o CertificateFile=/tmp/ops_key-cert.pub
             -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
-            -W %h:%p -q root@{{ kv('VPN_JUMP_HOST') }}"
+            -W %h:%p -q iotgw-jump@{{ kv('VPN_JUMP_HOST') }}"
 
   - id: iotgw_deployment
     type: io.kestra.plugin.kubernetes.core.PodCreate
