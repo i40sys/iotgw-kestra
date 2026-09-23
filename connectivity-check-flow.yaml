@@ -97,13 +97,13 @@ tasks:
       labels:
         app.kubernetes.io/managed-by: kestra
         kestra.io/flow: connectivity-check
-    # task-065 residual fix: rather than DownloadFiles+inputFiles per namespace
-    # file (fine for the 2 files this flow used, but keep the three runner
-    # flows consistent — see Flow.yaml for the full rationale), inject only
-    # the tiny runtime-generated inventory.yml here and `git clone` the
-    # (public) namespace repo straight into the pod's workingDir below.
-    inputFiles:
-      inventory.yml: "{{ outputs.create_inventory_file.value }}"
+    # SPEED (iotgw-ng connectivity-check UX): the runtime inventory is passed as
+    # an env var (INVENTORY_YML) instead of `inputFiles`. inputFiles adds an
+    # init-files container + a file-sidecar upload that took ~60 s on kind/WSL2
+    # for one tiny file (task-065); the repo itself is still `git clone`d in-pod.
+    # waitForLogInterval: the plugin default waits 30 s for late logs after the
+    # pod ends; the script's last line is already flushed well within 3 s.
+    waitForLogInterval: PT3S
     spec:
       restartPolicy: Never
       containers:
@@ -129,16 +129,20 @@ tasks:
               value: "{{ inputs.cert_fqdn }}"
             - name: PKI_BASE_URL
               value: "{{ inputs.pki_base_url }}"
+            - name: INVENTORY_YML
+              value: "{{ outputs.create_inventory_file.value }}"
           command:
             - /bin/bash
             - -c
             - |
               set -e
+              # IOTGW_PHASE <id> markers let the iotgw-ui backend show the operator
+              # which phase the check is in while it waits (connectivity-check UX).
+              echo "IOTGW_PHASE runner-started"
+              printf '%s\n' "$INVENTORY_YML" > inventory.yml
               # task-065 residual fix: clone the (public) namespace repo straight into
-              # the pod's workingDir instead of injecting its files as inputFiles (see
-              # Flow.yaml for the full rationale). Runs before anything else so
-              # connectivity_check.yml / fetch_kms_key.py are present; inventory.yml is
-              # injected via inputFiles (not in the repo) so this cannot clobber it.
+              # the pod's workingDir (see Flow.yaml for the full rationale).
+              echo "IOTGW_PHASE fetch-playbooks"
               git clone --depth 1 https://github.com/i40sys/iotgw-kestra /tmp/nsrepo
               cp -a /tmp/nsrepo/. .
               rm -rf .git /tmp/nsrepo
@@ -146,6 +150,7 @@ tasks:
               # from the iotgw-ui backend instead of fetching a per-device key from
               # KMS — keys/id_rsa is no longer the SSH auth path (AC#4).
               # cytopia/ansible:latest-tools (Alpine) ships neither openssl nor curl.
+              echo "IOTGW_PHASE install-tools"
               apk add --no-cache openssl curl
               ssh-keygen -q -t ed25519 -N '' -f /tmp/ops_key -C iotgw-ops
               ZONE='{{ inputs.json_data.pki_zone | default("") }}'
@@ -153,6 +158,7 @@ tasks:
                 echo "ERROR: OPS_CERT_MINT_TOKEN is empty — populate the 'ops-cert-mint' Secret in the kestra namespace (task-092)." >&2
                 exit 1
               fi
+              echo "IOTGW_PHASE mint-cert"
               if [ -n "$ZONE" ]; then
                 echo "Minting a short-lived iotgw-ops SSH user certificate for zone $ZONE..."
                 curl -fsS -X POST http://iotgw-ui-backend.iotgw-ui.svc.cluster.local:4444/internal/ssh/ops-cert \
@@ -194,6 +200,7 @@ tasks:
               # `ping <IPv4>`. The result is logged as an ICMP_RESULT marker the
               # iotgw-ui backend parses; a failed ping does not stop the
               # SSH/Ansible check below (the pod's exit code is Ansible's).
+              echo "IOTGW_PHASE icmp"
               if [ -n "$ZONE" ]; then
                 set +e
                 ssh -i /tmp/ops_key -o CertificateFile=/tmp/ops_key-cert.pub -o IdentitiesOnly=yes \
@@ -205,5 +212,7 @@ tasks:
               else
                 echo "ICMP_RESULT rc=skipped (no pki_zone → no ops cert for the bastion)"
               fi
+              echo "IOTGW_PHASE ssh"
               ansible-playbook -i inventory.yml connectivity_check.yml
-          workingDir: "{{ workingDir }}"
+              echo "IOTGW_PHASE done"
+          workingDir: /tmp/work
