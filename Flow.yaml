@@ -80,7 +80,12 @@ tasks:
       restartPolicy: Never
       containers:
         - name: ansible
-          image: cytopia/ansible:latest-tools
+          # PINNED (iotgw-ng task-129): ansible-core 2.18.19 + community.general
+          # 10.7.6 + community.docker 4.8.5 bundled. `latest-tools` silently moved
+          # to ansible-core 2.21, which breaks the gekmihesg.openwrt role (its
+          # monkeypatch needs the pre-2.19 _configure_module 4-tuple). Bump the
+          # tag AND digest together, and re-test provisioning.
+          image: cytopia/ansible:2.18-tools@sha256:da5e5a6066afb11ef1541a7eff690ec28a1af9647c4f04533f71d3f7fcd1affe
           env:
             # task-092 part 2b: short-lived iotgw-ops SSH USER CERTIFICATE, minted
             # by the iotgw-ui backend's internal /ssh/ops-cert endpoint, replaces
@@ -123,14 +128,14 @@ tasks:
               rm -rf .git /tmp/nsrepo
               # SSH-CA enrollment (tasks/ssh_ca.yaml) encrypts the TOTP envelope and
               # POSTs it to the ssh-ca edge function from the CONTROLLER (delegate_to
-              # localhost = this pod). cytopia/ansible:latest-tools (Alpine) ships
+              # localhost = this pod). cytopia/ansible:2.18-tools (Alpine) ships
               # neither openssl nor curl, so add them before the playbook runs.
               apk add --no-cache openssl curl
               pip install passlib
               mkdir -p /etc/ansible/collections /etc/ansible/roles
               ansible-galaxy collection install community.docker -p /etc/ansible/collections
               ansible-galaxy collection install community.general -p /etc/ansible/collections
-              ansible-galaxy role install gekmihesg.openwrt -p /etc/ansible/roles
+              ansible-galaxy role install git+https://github.com/gekmihesg/ansible-openwrt.git,01fda612aeedd0b6578aaede330c28a47fca3013,gekmihesg.openwrt -p /etc/ansible/roles
               cat > ansible.cfg <<'ANSIBLECFG'
               [defaults]
               roles_path = /etc/ansible/roles:~/.ansible/roles:/usr/share/ansible/roles
