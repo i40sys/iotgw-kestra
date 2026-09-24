@@ -42,7 +42,13 @@ tasks:
           # live-boot phase keeps Trust-On-First-Use until decision-028 §5 is
           # resolved. Do NOT switch this to cert verification; there is nothing
           # to verify against until after enrollment (Flow.yaml/ssh_ca).
-          ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o CertificateFile=/tmp/ops_key-cert.pub'
+          # BASTION HOP (decision-030): the controller has no L3 route into the
+          # per-network Netmaker/WireGuard subnets, so SSH reaches the live-booted
+          # gateway through the Netmaker host {{ kv('VPN_JUMP_HOST') }} as a
+          # ProxyCommand jump — the same hop as connectivity-check-flow.yaml and
+          # Flow.yaml, via the `iotgw-jump` account that accepts the iotgw-ops
+          # user cert (iotgw-ng scripts/ssh-ca/bastion-trust.sh).
+          ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o CertificateFile=/tmp/ops_key-cert.pub -o ProxyCommand="ssh -i /tmp/ops_key -o CertificateFile=/tmp/ops_key-cert.pub -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -W %h:%p -q iotgw-jump@{{ kv('VPN_JUMP_HOST') }}"'
 
   - id: run_install
     type: io.kestra.plugin.kubernetes.core.PodCreate
