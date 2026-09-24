@@ -1,0 +1,111 @@
+---
+# Install the iotgw agent into the freshly written OpenWRT rootfs (/mnt/p2)
+# — iotgw-ng decision-032 / task-125.09. Runs on the LIVE-booted host from
+# d01_install_owrt.yml, after setup_vpn.sh. On first boot the installed
+# gateway then runs `iotgw daemon` (procd) and shows `iotgw status` on tty1
+# and the serial console. Pinned version: vars/iotgw.yml.
+
+- name: "iotgw: read the live image's device identity (api_base, device_id)"
+  ansible.builtin.slurp:
+    src: /run/iotgw/bootstrap.json
+  register: iotgw_live_state
+  failed_when: false
+  tags: [iotgw]
+
+- name: "iotgw: read the Netmaker network of the VPN the live image received"
+  # Only the '# Network:' header — never slurp the file (it holds the key).
+  ansible.builtin.command:
+    cmd: sed -n 's/^# Network:[[:space:]]*//p' /etc/wireguard/wg0.server.conf
+  register: iotgw_live_network
+  changed_when: false
+  failed_when: false
+  tags: [iotgw]
+
+- name: "iotgw: resolve the identity to install"
+  vars:
+    live_identity: "{{ (iotgw_live_state.content | b64decode | from_json).identity if (iotgw_live_state.content is defined) else {} }}"
+  ansible.builtin.set_fact:
+    # The live image's api_base is the public API URL the gateway itself
+    # reached (the flow's iotgw_ssh_ca_base_url is cluster-internal).
+    iotgw_api_base: "{{ iotgw_api_base | default(live_identity.api_base | default(''), true) }}"
+    iotgw_device_id: "{{ device_id | default(live_identity.device_id | default(''), true) }}"
+    iotgw_network_cidr: "{{ (iotgw_live_network.stdout | default('')).strip() }}"
+    iotgw_installed_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+  tags: [iotgw]
+
+- name: "iotgw: warn when the agent cannot authenticate by itself"
+  ansible.builtin.debug:
+    msg: >-
+      iotgw: incomplete device identity (api_base={{ iotgw_api_base or 'MISSING' }},
+      device_id={{ iotgw_device_id or 'MISSING' }}, device_uuid={{ device_uuid | default('MISSING') }}):
+      the daemon still keeps the network healthy, but `iotgw vpn/ssh refresh` will need -otp CODE.
+  when: not iotgw_api_base or not iotgw_device_id or not (device_uuid | default(''))
+  tags: [iotgw]
+
+- name: "iotgw: download the pinned OpenWRT package ({{ iotgw_version }}) on the controller"
+  # binary + procd service + console launcher + LuCI page/rpcd plugin, from the iotgw-ng release
+  delegate_to: localhost
+  ansible.builtin.get_url:
+    url: "{{ iotgw_openwrt_url }}"
+    dest: "/tmp/iotgw-openwrt-{{ iotgw_version }}-linux-amd64.tar.gz"
+    checksum: "sha256:{{ iotgw_openwrt_sha256_amd64 }}"
+    mode: "0644"
+  when: iotgw_openwrt_src is not defined
+  tags: [iotgw]
+
+- name: "iotgw: install the binary, service, console launcher and LuCI page (Status → IoGW NG)"
+  ansible.builtin.unarchive:
+    src: "{{ iotgw_openwrt_src | default('/tmp/iotgw-openwrt-' ~ iotgw_version ~ '-linux-amd64.tar.gz') }}"
+    dest: /mnt/p2
+    owner: root
+    group: root
+  tags: [iotgw]
+
+- name: "iotgw: keep the vpn API's configuration (0600, holds the private key)"
+  ansible.builtin.command:
+    cmd: install -D -m 0600 /etc/wireguard/wg0.server.conf /mnt/p2/etc/iotgw/wg0.server.conf
+    removes: /etc/wireguard/wg0.server.conf
+  tags: [iotgw]
+
+- name: "iotgw: write /etc/config/iotgw"
+  ansible.builtin.template:
+    src: templates/iotgw.config.j2
+    dest: /mnt/p2/etc/config/iotgw
+    owner: root
+    group: root
+    mode: "0600"
+  tags: [iotgw]
+
+- name: "iotgw: enable the service (what `/etc/init.d/iotgw enable` links)"
+  ansible.builtin.file:
+    src: ../init.d/iotgw
+    dest: "/mnt/p2/etc/rc.d/{{ item }}"
+    state: link
+    force: true
+  loop: [S95iotgw, K10iotgw]
+  tags: [iotgw]
+
+- name: "iotgw: dashboard on tty1 and the serial console at boot"
+  ansible.builtin.replace:
+    path: /mnt/p2/etc/inittab
+    regexp: '^(tty1|ttyS0)::askfirst:/usr/libexec/login.sh$'
+    replace: '\1::respawn:/usr/libexec/iotgw-console'
+  tags: [iotgw]
+
+- name: "iotgw: keep the agent across sysupgrade"
+  ansible.builtin.lineinfile:
+    path: /mnt/p2/etc/sysupgrade.conf
+    line: "{{ item }}"
+    create: true
+    mode: "0644"
+  loop:
+    - /usr/sbin/iotgw
+    - /etc/iotgw/
+    - /etc/init.d/iotgw
+    - /usr/libexec/iotgw-console
+    - /usr/libexec/rpcd/iotgw
+    - /usr/share/rpcd/acl.d/luci-app-iotgw.json
+    - /usr/share/luci/menu.d/luci-app-iotgw.json
+    - /www/luci-static/resources/view/iotgw/
+    - /etc/inittab
+  tags: [iotgw]

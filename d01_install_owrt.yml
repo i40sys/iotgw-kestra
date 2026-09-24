@@ -3,15 +3,11 @@
   hosts: all
   remote_user: root
   gather_facts: false
+  vars_files:
+    - vars/iotgw.yml
   vars:
     target_disk: /dev/sda
     openwrt_version: 23.05.4
-    vpn_server_ip: 1.2.3.4
-    vpn_server_port: 123
-    vpn_private_key: the_private_key
-    vpn_public_key: the_public_key
-    vpn_ip_address: 4.3.2.1
-    ip_route_default_gw: 2.1.3.4
 
   tasks:
     - import_tasks: tasks/partitions.yaml
@@ -124,6 +120,10 @@
       ansible.builtin.command:
         cmd: /tmp/setup_vpn.sh
       tags: [vpn]
+
+    # iotgw-ng decision-032: the self-healing agent + console dashboard.
+    - import_tasks: tasks/iotgw_agent.yaml
+      tags: [iotgw]
 
     - name: Copy script for unsetting up chroot
       ansible.builtin.copy:
