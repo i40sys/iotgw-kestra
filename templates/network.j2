@@ -55,14 +55,5 @@ config wireguard_wg0 'wgserver'
         list allowed_ips '0.0.0.0/0'
         option description 'netmaker.example.com'
 
-{# task-125.01: an empty gateway makes this route on-link (endpoint ARPed on
-   the LAN, wg0 never handshakes). Only pin the endpoint when a gateway is
-   known; otherwise the WAN default (metric 0) already beats wg0's (metric 5).
-   decision-032: the iotgw agent will own this route. #}
-{% if ip_route_default_gw is defined and ip_route_default_gw | string | trim %}
-config route
-        option interface 'wan'                # your WAN interface name
-        option target '{{ vpn_server_ip }}'
-        option netmask '255.255.255.255'
-        option gateway '{{ ip_route_default_gw }}'
-{% endif %}
+{# No route to the VPN endpoint: the iotgw agent owns it and keeps it on the
+   current LAN router (iotgw-ng decision-032 §9, task-125.10). #}

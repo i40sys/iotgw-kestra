@@ -1,0 +1,20 @@
+# iotgw agent configuration (iotgw-ng decision-032). Written by the install
+# playbook; the agent changes internet_policy / hold itself
+# (`iotgw internet lan|vpn|auto`, `iotgw hold enable|disable`).
+config iotgw 'main'
+	# auto = LAN preferred, automatic fallback to VPN; lan / vpn = pinned
+	option internet_policy 'auto'
+	option prefer 'lan'
+	option hold '0'
+	option check_interval '60'
+	option wg_iface 'wg0'
+	# Device identity (identifiers only — the one-time code is derived from
+	# them for `iotgw vpn refresh` / `iotgw ssh refresh`).
+	option api_base '{{ iotgw_api_base }}'
+	option device_id '{{ iotgw_device_id }}'
+	option device_uuid '{{ device_uuid | default('') }}'
+	option network_id '{{ network_id | default('') }}'
+	option domain_id '{{ domain_id | default('') }}'
+	option totp_counter '{{ totp_counter | default(0) }}'
+	option network_cidr '{{ iotgw_network_cidr }}'
+	option installed_at '{{ iotgw_installed_at }}'

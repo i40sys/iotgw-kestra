@@ -32,38 +32,14 @@ parse_wg_conf() {
     /^\[/ && !/^\[Interface\]/ {inf=0}
     inf && /^Address/ {print $3; exit}
   ' "$WGCONF")
-
-  # Default GW from "ip route add ... via X.X.X.X dev ..."
-  ip_route_default_gw=$(awk '
-    /ip route add/ {
-      for (i = 1; i <= NF; i++) {
-        if ($i == "via") {
-          print $(i+1)
-          exit
-        }
-      }
-    }
-  ' "$WGCONF")
 }
 
 parse_wg_conf
 
-# Pin the VPN endpoint to the WAN only when wg0.conf names the WAN gateway.
-# The live image's wg0.conf has no "ip route add ... via" line, and a route
-# with an empty gateway becomes on-link (216.45.62.117 dev eth0 scope link):
-# the endpoint is ARPed on the LAN, the handshake never leaves and wg0 stays
-# down. Without it the WAN default (metric 0) already beats wg0's default
-# (metric 5). Not falling back to the live host's gateway on purpose: that
-# would bake the install site's router into a gateway that may move.
-ROUTE_BLOCK=""
-if [ -n "$ip_route_default_gw" ]; then
-  ROUTE_BLOCK="
-config route
-        option interface 'wan'
-        option target '${vpn_server_ip}'
-        option netmask '255.255.255.255'
-        option gateway '${ip_route_default_gw}'"
-fi
+# No route to the VPN endpoint is written here: the iotgw agent owns it
+# (iotgw-ng decision-032 §9, task-125.10) and keeps it on the CURRENT LAN
+# router. A static route written at install time went on-link on gw-c3
+# (empty gateway) and goes stale whenever the site's router changes.
 
 # Create helper script INSIDE the chroot filesystem
 INNER_SCRIPT="${ROOTFS}/tmp/wg_import.sh"
@@ -102,7 +78,6 @@ config wireguard_wg0 'wgserver'
         option route_allowed_ips '1'
         list allowed_ips '0.0.0.0/0'
         option description 'netmaker.example.com'
-${ROUTE_BLOCK}
 ########## End WireGuard import ##########
 EON
 

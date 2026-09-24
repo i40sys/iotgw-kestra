@@ -1,0 +1,9 @@
+---
+# The iotgw agent installed on OpenWRT (iotgw-ng decision-032): the release's
+# iotgw-openwrt-linux-amd64.tar.gz (binary + procd service + console
+# launcher), published by the iotgw-ng `live-image` CI on every v* tag.
+# PINNED: bump the version and the checksum together (the release's SHA256SUMS).
+# Set iotgw_openwrt_src to a controller-local tarball to install an unreleased build.
+iotgw_version: "v0.2.0"
+iotgw_openwrt_sha256_amd64: "REPLACE_WITH_RELEASE_SHA256"
+iotgw_openwrt_url: "https://github.com/i40sys/iotgw-ng/releases/download/{{ iotgw_version }}/iotgw-openwrt-linux-amd64.tar.gz"
