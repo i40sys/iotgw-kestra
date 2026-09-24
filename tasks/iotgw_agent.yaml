@@ -43,7 +43,7 @@
   tags: [iotgw]
 
 - name: "iotgw: download the pinned OpenWRT package ({{ iotgw_version }}) on the controller"
-  # binary + procd service + console launcher, from the iotgw-ng release
+  # binary + procd service + console launcher + LuCI page/rpcd plugin, from the iotgw-ng release
   delegate_to: localhost
   ansible.builtin.get_url:
     url: "{{ iotgw_openwrt_url }}"
@@ -53,7 +53,7 @@
   when: iotgw_openwrt_src is not defined
   tags: [iotgw]
 
-- name: "iotgw: install the binary, service and console launcher"
+- name: "iotgw: install the binary, service, console launcher and LuCI page (Status → IoGW NG)"
   ansible.builtin.unarchive:
     src: "{{ iotgw_openwrt_src | default('/tmp/iotgw-openwrt-' ~ iotgw_version ~ '-linux-amd64.tar.gz') }}"
     dest: /mnt/p2
@@ -103,5 +103,9 @@
     - /etc/iotgw/
     - /etc/init.d/iotgw
     - /usr/libexec/iotgw-console
+    - /usr/libexec/rpcd/iotgw
+    - /usr/share/rpcd/acl.d/luci-app-iotgw.json
+    - /usr/share/luci/menu.d/luci-app-iotgw.json
+    - /www/luci-static/resources/view/iotgw/
     - /etc/inittab
   tags: [iotgw]
