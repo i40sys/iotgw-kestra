@@ -5,7 +5,7 @@ inputs:
   - id: json_data
     type: JSON
     description: "Target configuration for OpenWRT installation."
-    defaults: '{"target_disk": "/dev/sda", "openwrt_version": "23.05.4", "target_ip": "0.0.0.0", "ssh_key_id": "", "vpn_server_ip": "1.2.3.4", "vpn_server_port": 51820, "vpn_private_key": "", "vpn_public_key": "", "vpn_ip_address": "", "ip_route_default_gw": ""}'
+    defaults: '{"target_disk": "/dev/sda", "openwrt_version": "23.05.4", "target_ip": "0.0.0.0", "ssh_key_id": ""}'
 
 tasks:
   - id: dump_input
@@ -118,11 +118,5 @@ tasks:
               fi
               ansible-playbook -i inventory.yml d01_install_owrt.yml \
                 -e "target_disk={{ inputs.json_data.target_disk }}" \
-                -e "openwrt_version={{ inputs.json_data.openwrt_version }}" \
-                -e "vpn_server_ip={{ inputs.json_data.vpn_server_ip }}" \
-                -e "vpn_server_port={{ inputs.json_data.vpn_server_port }}" \
-                -e "vpn_private_key={{ inputs.json_data.vpn_private_key }}" \
-                -e "vpn_public_key={{ inputs.json_data.vpn_public_key }}" \
-                -e "vpn_ip_address={{ inputs.json_data.vpn_ip_address }}" \
-                -e "ip_route_default_gw={{ inputs.json_data.ip_route_default_gw }}"
+                -e "openwrt_version={{ inputs.json_data.openwrt_version }}"
           workingDir: "{{ workingDir }}"
