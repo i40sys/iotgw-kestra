@@ -124,5 +124,10 @@ tasks:
               fi
               ansible-playbook -i inventory.yml d01_install_owrt.yml \
                 -e "target_disk={{ inputs.json_data.target_disk }}" \
-                -e "openwrt_version={{ inputs.json_data.openwrt_version }}"
+                -e "openwrt_version={{ inputs.json_data.openwrt_version }}" \
+                -e "device_id={{ inputs.json_data.device_id ?? '' }}" \
+                -e "device_uuid={{ inputs.json_data.device_uuid ?? '' }}" \
+                -e "network_id={{ inputs.json_data.network_id ?? '' }}" \
+                -e "domain_id={{ inputs.json_data.domain_id ?? '' }}" \
+                -e "totp_counter={{ inputs.json_data.totp_counter ?? 0 }}"
           workingDir: "{{ workingDir }}"

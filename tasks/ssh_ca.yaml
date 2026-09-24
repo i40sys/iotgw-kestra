@@ -255,6 +255,13 @@
         dest: /etc/ssh/ssh_host_ecdsa_key-cert.pub
         mode: "0644"
 
+    - name: "ssh_ca: install the domain Host CA (the iotgw dashboard checks the host cert against it)"
+      when: enroll.host_ca is defined and enroll.host_ca | length > 0
+      ansible.builtin.copy:
+        content: "{{ enroll.host_ca }}"
+        dest: /etc/ssh/ssh-host-ca.pub
+        mode: "0644"
+
     - name: "ssh_ca: install the User CA trust anchor"
       ansible.builtin.copy:
         content: "{{ enroll.user_ca }}"
