@@ -74,6 +74,7 @@
     owner: mosquitto
     group: mosquitto
     mode: '0640'
+  no_log: true  # renders iiot_mqtt_password
 
 # docker run --rm --entrypoint /bin/sh \
 #   -v /opt/stacks/mosquitto/etc:/mosquitto/config \
@@ -112,21 +113,26 @@
     auto_remove: true
     state: started
   loop: "{{ users }}"
-  when: users is defined and users | length > 0
+  loop_control:
+    label: "{{ item.username }}"
+  when: users is defined and users is not none and users | length > 0
+  no_log: true  # item.password is on the command line
 
-# Task to check if user {{ iiot_mqtt_user }} exists in EMQX authentication database
+# Task to check if user {{ iiot_mqtt_user }} exists in EMQX authentication database.
+# task-130: look the user up by id (200 / 404) instead of scanning the first
+# page of 20 users — past 20 users an existing user was "missing", the POST
+# then 409'd and the stack failed.
 - name: "mosquitto: Check if user {{ iiot_mqtt_user }} exists in EMQX"
   uri:
-    #url: "{{ emqx_api_url }}/authentication/password_based%3Abuilt_in_database/users?limit=100&page=1"
-    url: "{{ emqx_api_url }}/authentication/password_based%3Abuilt_in_database/users?limit=20&page=1"
+    url: "{{ emqx_api_url }}/authentication/password_based%3Abuilt_in_database/users/{{ iiot_mqtt_user | urlencode }}"
     method: GET
     headers:
-      Authorization: "Basic {{ (emqx_api_key + ':' + emqx_api_secret) | b64encode }}"
-      #Authorization: "Basic REDACTED_BASIC_AUTH"
+      Authorization: "Basic {{ (emqx_api_key ~ ':' ~ emqx_api_secret) | b64encode }}"
       Content-Type: "application/json"
     return_content: yes
-  register: user_list
-  failed_when: user_list.status != 200
+    status_code: [200, 404]
+  register: emqx_user
+  no_log: true
 
 # - ansible.builtin.debug:
 #     var: user_list
@@ -137,7 +143,7 @@
     url: "{{ emqx_api_url }}/authentication/password_based%3Abuilt_in_database/users"
     method: POST
     headers:
-      Authorization: "Basic {{ (emqx_api_key + ':' + emqx_api_secret) | b64encode }}"
+      Authorization: "Basic {{ (emqx_api_key ~ ':' ~ emqx_api_secret) | b64encode }}"
       Content-Type: "application/json"
     body_format: json
     body:
@@ -145,22 +151,24 @@
       password: "{{ iiot_mqtt_password }}"
       is_superuser: true
     status_code: 201
-  when: iiot_mqtt_user not in user_list.json.data | map(attribute='user_id')
+  when: emqx_user.status == 404
+  no_log: true
 
 # Task to update the password if the user already exists
 - name: "mosquitto: Update password for user {{ iiot_mqtt_user }}"
   uri:
-    url: "{{ emqx_api_url }}/authentication/password_based%3Abuilt_in_database/users/{{ iiot_mqtt_user }}"
+    url: "{{ emqx_api_url }}/authentication/password_based%3Abuilt_in_database/users/{{ iiot_mqtt_user | urlencode }}"
     method: PUT
     headers:
-      Authorization: "Basic {{ (emqx_api_key + ':' + emqx_api_secret) | b64encode }}"
+      Authorization: "Basic {{ (emqx_api_key ~ ':' ~ emqx_api_secret) | b64encode }}"
       Content-Type: "application/json"
     body_format: json
     body:
       password: "{{ iiot_mqtt_password }}"
       is_superuser: true
     status_code: 200
-  when: iiot_mqtt_user in user_list.json.data | map(attribute='user_id')
+  when: emqx_user.status == 200
+  no_log: true
 
 - name: "mosquitto: Start Docker stack"
   community.docker.docker_compose_v2:

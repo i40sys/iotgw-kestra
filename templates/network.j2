@@ -40,16 +40,21 @@ config device
 	option type 'bridge'
 	option name 'docker0'
 
+{# wg0 = the management VPN. The iotgw_wg0_* facts are READ BACK from the
+   gateway's live config and asserted in tasks/system.yaml (task-130) — never
+   operator-typed — so this rewrite re-emits exactly what the gateway runs. #}
 config interface 'wg0'
         option proto 'wireguard'
-        option private_key '{{ vpn_private_key }}'
-        list addresses '{{ vpn_ip_address }}'
+        option private_key '{{ iotgw_wg0_private_key }}'
+{% for a in iotgw_wg0_addresses.split() %}
+        list addresses '{{ a }}'
+{% endfor %}
         option metric '5'
 
 config wireguard_wg0 'wgserver'
-        option public_key '{{ vpn_public_key }}'
-        option endpoint_host '{{ vpn_server_ip }}'
-        option endpoint_port '{{ vpn_server_port }}'
+        option public_key '{{ iotgw_wg0_public_key }}'
+        option endpoint_host '{{ iotgw_wg0_endpoint_host }}'
+        option endpoint_port '{{ iotgw_wg0_endpoint_port }}'
         option persistent_keepalive '25'
         option route_allowed_ips '1'
         list allowed_ips '0.0.0.0/0'

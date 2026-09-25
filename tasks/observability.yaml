@@ -94,6 +94,7 @@
     group: root
     mode: '0640'
   with_items: "{{ alloy_config_files }}"
+  no_log: true  # OAuth2 client secrets + kuma exporter password (task-130)
 - name: "alloy: Clean up controller copy of {{ item }}.j2"
   ansible.builtin.file:
     path: /tmp/{{ item }}.j2

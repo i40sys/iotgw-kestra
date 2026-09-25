@@ -48,3 +48,11 @@ This repository contains Kestra workflows and Ansible playbooks for automated pr
 - `community.docker`
 - `gekmihesg.openwrt`
 - `oriolrius.netmaker`
+
+### Provisioning variable contract (iotgw-ng task-130)
+- The deployment JSON (Kestra `json_data`, passed as `-e @vars.json`) is described by the iotgw-ng
+  JSON Schema `iotgw-ui/packages/supabase-contract/src/deployment-config.schema.json`.
+- `tasks/preflight.yaml` (pre_tasks, controller-only) enforces it: unknown tags, required vars per
+  enabled stack (tag selected AND enable flag not false), value shapes. Keep both in sync.
+- `templates/network.j2` / `templates/firewall.j2` rewrite `/etc/config/{network,firewall}` wholesale;
+  wg0 is re-read from the gateway and asserted first — never feed WireGuard values from the UI.
