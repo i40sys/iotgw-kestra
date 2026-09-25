@@ -19,8 +19,8 @@ config dnsmasq
 
 config dhcp 'lan'
 	option interface 'lan'
-	option start '40'
-	option limit '50'
+	option start '{{ iotgw_dhcp_start }}'
+	option limit '{{ iotgw_dhcp_limit }}'
 	option leasetime '24h'
 	option dhcpv4 'server'
 	list dhcp_option ' 42,{{ local_ip_address }}'
