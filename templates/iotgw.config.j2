@@ -8,13 +8,13 @@ config iotgw 'main'
 	option hold '0'
 	option check_interval '60'
 	option wg_iface 'wg0'
-	# Device identity (identifiers only — the one-time code is derived from
-	# them for `iotgw vpn refresh` / `iotgw ssh refresh`).
+	# Device identity — identifiers only. One-time codes are NOT derived from
+	# them any more: the gateway cannot compute a code (decision-033); the
+	# operator types it (`iotgw vpn refresh -otp`, console, LuCI).
 	option api_base '{{ iotgw_api_base }}'
 	option device_id '{{ iotgw_device_id }}'
 	option device_uuid '{{ device_uuid | default('') }}'
 	option network_id '{{ network_id | default('') }}'
 	option domain_id '{{ domain_id | default('') }}'
-	option totp_counter '{{ totp_counter | default(0) }}'
 	option network_cidr '{{ iotgw_network_cidr }}'
 	option installed_at '{{ iotgw_installed_at }}'
