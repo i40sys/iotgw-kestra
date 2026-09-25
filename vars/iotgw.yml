@@ -4,6 +4,6 @@
 # launcher), published by the iotgw-ng `live-image` CI on every v* tag.
 # PINNED: bump the version and the checksum together (the release's SHA256SUMS).
 # Set iotgw_openwrt_src to a controller-local tarball to install an unreleased build.
-iotgw_version: "v0.2.2"
-iotgw_openwrt_sha256_amd64: "16a184d4a8adf0aa30bb8cbf6c1a47dafac648d943c2e308b80b7f91ce86d5e2"
+iotgw_version: "v0.3.0"
+iotgw_openwrt_sha256_amd64: "a03084e5ecf33243b9f21103642a8ac39555bac396393bb44e3baef9b5f21d7f"
 iotgw_openwrt_url: "https://github.com/i40sys/iotgw-ng/releases/download/{{ iotgw_version }}/iotgw-openwrt-linux-amd64.tar.gz"

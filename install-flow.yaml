@@ -133,6 +133,5 @@ tasks:
                 -e "device_id={{ inputs.json_data.device_id ?? '' }}" \
                 -e "device_uuid={{ inputs.json_data.device_uuid ?? '' }}" \
                 -e "network_id={{ inputs.json_data.network_id ?? '' }}" \
-                -e "domain_id={{ inputs.json_data.domain_id ?? '' }}" \
-                -e "totp_counter={{ inputs.json_data.totp_counter ?? 0 }}"
+                -e "domain_id={{ inputs.json_data.domain_id ?? '' }}"
           workingDir: "{{ workingDir }}"

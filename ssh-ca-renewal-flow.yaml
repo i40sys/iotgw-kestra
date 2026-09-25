@@ -31,7 +31,7 @@ tasks:
   # (reachable). Schema verified against
   # iotgw-ui/supabase/migrations/{20250922113845_new_devices_table,
   # 20250824185553_networks_table,20260914000000_add_pki_zone_to_domains}.sql:
-  # devices(id, network_id, name, ip_address, totp_counter, ssh_key_id),
+  # devices(id, network_id, name, ip_address, ssh_key_id),
   # networks(id, domain_id), domains(id, pki_zone).
   #
   # task-092 part 2b: dom.pki_zone is also selected (not just filtered on) so
@@ -53,7 +53,6 @@ tasks:
       SELECT
         d.id                    AS device_id,
         d.name                  AS device_name,
-        d.totp_counter          AS totp_counter,
         d.ssh_key_id            AS ssh_key_id,
         d.ip_address            AS ip_address,
         n.id                    AS network_id,
@@ -96,7 +95,7 @@ tasks:
           # v1.3.35). Wire format verified against tasks/ssh_ca.yaml: device_id
           # = "<name>@<first 8 chars of network uuid>" (computed in SQL as
           # network_prefix — LEFT(n.id::text,8) — so no string-slicing needed
-          # in Pebble), and totp_counter/ssh_key_id/device_uuid/network_id/
+          # in Pebble), and ssh_key_id/device_uuid/network_id/
           # domain_id/iotgw_ssh_ca_base_url match exactly what ssh_ca.yaml
           # consumes.
           #
@@ -115,7 +114,6 @@ tasks:
             device_uuid: "{{ fromJson(taskrun.value).device_id }}"
             network_id: "{{ fromJson(taskrun.value).network_id }}"
             domain_id: "{{ fromJson(taskrun.value).domain_id }}"
-            totp_counter: "{{ fromJson(taskrun.value).totp_counter }}"
             iotgw_ssh_ca_base_url: "http://kong.supabase-app.svc.cluster.local:8000"
             # task-092 part 2b: the domain's pki-manager zone, so the
             # `provisioning` subflow's runner pod can mint the short-lived

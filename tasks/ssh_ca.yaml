@@ -1,361 +1,122 @@
 ---
-# tasks/ssh_ca.yaml — idempotent SSH-CA enrollment of a gateway (task-089).
+# tasks/ssh_ca.yaml — SSH-CA enrollment / renewal of a gateway through its iotgw
+# agent (task-089, reworked for iotgw-ng decision-033 / task-132.06).
 #
-# decision-026 phase 3, decision-025 change-map. Turns a gateway from raw-key
-# access into certificate access WITHOUT removing the break-glass keys:
-#   1. ensure an ecdsa-P256 host key (the private half never leaves the device;
-#      P-256 because pki-manager's ECIES KRL channel is P-256 only, decision-024);
-#   2. enroll via the `ssh-ca` EDGE FUNCTION over the device TOTP channel — the
-#      encryption is done on the CONTROLLER (openssl is not on the gateway), and
-#      the reply comes back in the same OpenSSL AES envelope, so it is decrypted
-#      on the controller too; the gateway only ever receives public trust
-#      material and its own certificate;
-#   3. install the host cert, the User CA anchor, auth_principals, an (empty)
-#      RevokedKeys, and two sshd drop-ins (50- break-glass sorts before 60- CA,
-#      so AuthorizedKeysFile wins and raw keys keep working);
-#   4. GATE on `sshd -t`, then RELOAD (never restart); on any failure remove the
-#      drop-ins, reload back, and fail loudly — a broken enrollment must leave
-#      the running sshd config intact and the gateway reachable.
+# The gateway's `iotgw ssh refresh` does the whole transaction: ensure the
+# ecdsa-P256 host key (the private half never leaves), call the `ssh-ca` edge
+# function, install host cert + User CA + auth_principals + RevokedKeys + the
+# 50-/60- sshd drop-ins, `sshd -t`, reload (never a plain restart), and restore
+# every file if sshd does not serve them. This task only decides HOW it is
+# authenticated (decision-033 §5):
 #
-# IDEMPOTENT: a re-run is a no-op (issues no new certificate) while the installed
-# host cert still certifies the current host key and has more than
-# `ssh_ca_renew_margin_seconds` of life left (decision-028 §1: 90 d cert, renew
-# at 60 d → 30 d margin). Set `ssh_ca_force=true` to force re-enrollment/renewal.
+#   * already enrolled (a host certificate is installed) → RENEW: signed with
+#     the enrolled host key, no one-time code at all;
+#   * not enrolled yet → FIRST ENROLLMENT: needs a one-time code. The gateway
+#     cannot compute one (its seed lives only in the KMS), so the controller asks
+#     the iotgw-ui backend for the current code (POST /internal/devices/
+#     enroll-code, bearer OPS_CERT_MINT_TOKEN — the runner's existing backend
+#     credential) and hands it to `iotgw ssh refresh -otp` for this one call.
+#     A device the server already has enrolled (e.g. reinstalled) is refused
+#     (409): use "Reset SSH enrollment" in the UI first.
 #
-# Proven end-to-end on a real OpenWRT 23.05.4 gateway (2026-09-15, task-089/097)
-# against the live ssh-ca edge function. OpenWRT specifics baked in and confirmed:
-#   - the init service is `/etc/init.d/sshd` and it HAS `reload` (no restart);
-#   - openssh-server (opkg) already ships `Include /etc/ssh/sshd_config.d/*.conf`
-#     — we add it only if missing (a base/dropbear config), validated;
-#   - `/etc/ssh/auth_principals/` does not exist by default (created here);
-#   - openssl/curl are NOT on the gateway — the TOTP encryption + POST + reply
-#     decryption run on the controller (delegate_to: localhost, /bin/bash).
+# No TOTP is derived anywhere any more (decision-009 is superseded).
 #
-# Required vars (from the Kestra flow / extra-vars):
-#   ssh_ca_endpoint   e.g. http://kong.supabase-app.svc.cluster.local:8000/functions/v1/ssh-ca
-#   device_id         "<name>@<networkPrefix>" (selects the TOTP secret)
-#   enroll_totp       the current device TOTP code (the AES pass; decision-009)
-# Optional:
-#   supabase_anon_key anon JWT, if the Kong route requires it (task-105/088)
-#   ssh_ca_force              default false — force re-enroll even if the cert is fresh
-#   ssh_ca_renew_margin_seconds  default 2592000 (30 d)
+# Vars (from the Kestra flow / extra-vars):
+#   device_uuid        the device's uuid (json_data) — selects the code
+#   iotgw_backend_url  default http://iotgw-ui-backend.iotgw-ui.svc.cluster.local:4444
+#   ssh_ca_force       default false — re-request even if the certificate is current
+# Env on the runner pod: OPS_CERT_MINT_TOKEN.
 
-- name: "ssh_ca: detect the ssh service manager (OpenWRT vs Debian)"
+- name: "ssh_ca: the gateway runs the iotgw agent (it performs the enrollment)"
   ansible.builtin.stat:
-    path: /etc/init.d/sshd
-  register: owrt_sshd
+    path: /usr/sbin/iotgw
+  register: iotgw_bin
   tags: [ssh_ca]
 
-- name: "ssh_ca: set service facts"
-  ansible.builtin.set_fact:
-    ssh_reload_cmd: "{{ '/etc/init.d/sshd reload' if owrt_sshd.stat.exists else 'systemctl reload ssh' }}"
-    sshd_bin: /usr/sbin/sshd
-    ssh_ca_renew_margin_seconds: "{{ ssh_ca_renew_margin_seconds | default(2592000) }}"
+- name: "ssh_ca: fail clearly without the agent"
+  ansible.builtin.assert:
+    that: iotgw_bin.stat.exists
+    fail_msg: >-
+      /usr/sbin/iotgw is missing: SSH enrollment goes through the iotgw agent
+      (decision-033). Reinstall the gateway with the current install flow.
+    quiet: true
   tags: [ssh_ca]
 
-# The backend packs `iotgw_ssh_ca_base_url` (the Kong base, no path); build the
-# full edge-function endpoint from it unless a caller passed ssh_ca_endpoint
-# whole. Keeps manual/standalone runs (which may set ssh_ca_endpoint directly)
-# working while the Kestra-driven path only sends the base URL.
-- name: "ssh_ca: resolve the ssh-ca endpoint"
-  ansible.builtin.set_fact:
-    ssh_ca_endpoint: "{{ ssh_ca_endpoint | default((iotgw_ssh_ca_base_url | regex_replace('/+$', '')) ~ '/functions/v1/ssh-ca') }}"
-  tags: [ssh_ca]
-
-- name: "ssh_ca: ensure an ecdsa-P256 host key exists (private half never leaves)"
-  ansible.builtin.command:
-    cmd: ssh-keygen -q -t ecdsa -b 256 -N "" -f /etc/ssh/ssh_host_ecdsa_key -C "{{ inventory_hostname }}"
-    creates: /etc/ssh/ssh_host_ecdsa_key
-  tags: [ssh_ca]
-
-- name: "ssh_ca: read the ecdsa host public key"
-  ansible.builtin.slurp:
-    src: /etc/ssh/ssh_host_ecdsa_key.pub
-  register: host_pub_b64
-  tags: [ssh_ca]
-
-- name: "ssh_ca: set host pubkey fact"
-  ansible.builtin.set_fact:
-    host_pubkey: "{{ host_pub_b64.content | b64decode | trim }}"
-  tags: [ssh_ca]
-
-# ── idempotence guard: is a fresh, matching host cert already installed? ─────
-- name: "ssh_ca: stat the installed host certificate"
+- name: "ssh_ca: is a host certificate already installed (enrolled)?"
   ansible.builtin.stat:
     path: /etc/ssh/ssh_host_ecdsa_key-cert.pub
   register: cert_stat
   tags: [ssh_ca]
 
-- name: "ssh_ca: read the installed host certificate (if any)"
-  ansible.builtin.slurp:
-    src: /etc/ssh/ssh_host_ecdsa_key-cert.pub
-  register: cert_b64
-  when: cert_stat.stat.exists
-  tags: [ssh_ca]
-
-- name: "ssh_ca: decide whether enrollment is needed (idempotence / renewal)"
-  delegate_to: localhost
-  vars:
-    cert_txt: "{{ (cert_b64.content | b64decode) if (cert_stat.stat.exists and cert_b64.content is defined) else '' }}"
-  ansible.builtin.shell:
-    cmd: |
-      set -euo pipefail
-      if [ "{{ ssh_ca_force | default(false) | bool | lower }}" = "true" ] || [ -z {{ cert_txt | quote }} ]; then
-        echo true; exit 0
-      fi
-      tmp="$(mktemp)"; printf '%s' {{ cert_txt | quote }} > "$tmp"
-      info="$(ssh-keygen -L -f "$tmp" 2>/dev/null || true)"; rm -f "$tmp"
-      cert_fp="$(printf '%s' "$info" | sed -n 's/.*Public key: [A-Z0-9-]*-CERT \(SHA256:[A-Za-z0-9+/]*\).*/\1/p')"
-      host_fp="$(printf '%s\n' {{ host_pubkey | quote }} | ssh-keygen -lf /dev/stdin 2>/dev/null | awk '{print $2}')"
-      valid_to="$(printf '%s' "$info" | sed -n 's/.*Valid: from [^ ]* to \([0-9T:-]*\).*/\1/p')"
-      if [ -z "$cert_fp" ] || [ "$cert_fp" != "$host_fp" ]; then echo true; exit 0; fi
-      end_epoch="$(date -d "$(printf '%s' "$valid_to" | tr T ' ')" +%s 2>/dev/null || echo 0)"
-      now_epoch="$(date +%s)"
-      remaining=$(( end_epoch - now_epoch ))
-      if [ "$remaining" -lt {{ ssh_ca_renew_margin_seconds | int }} ]; then echo true; else echo false; fi
-    executable: /bin/bash
-  register: need_enroll_out
-  changed_when: false
-  tags: [ssh_ca]
-
-- name: "ssh_ca: set needs_enroll fact"
+- name: "ssh_ca: set service facts"
   ansible.builtin.set_fact:
-    needs_enroll: "{{ need_enroll_out.stdout | trim | bool }}"
+    sshd_bin: /usr/sbin/sshd
+    iotgw_backend_url: "{{ iotgw_backend_url | default('http://iotgw-ui-backend.iotgw-ui.svc.cluster.local:4444') }}"
   tags: [ssh_ca]
 
-- name: "ssh_ca: already enrolled with a fresh matching cert — nothing to do"
-  ansible.builtin.debug:
-    msg: "Skipping enrollment: a valid host certificate for this key is already installed (use ssh_ca_force=true to renew)."
-  when: not needs_enroll
+# ── enrolled: renew with the host key (no code) ─────────────────────────────
+- name: "ssh_ca: renew through the agent (host-key signed, no code)"
+  when: cert_stat.stat.exists
+  ansible.builtin.command:
+    argv: "{{ ['/usr/sbin/iotgw', 'ssh', 'refresh'] + (['-force'] if (ssh_ca_force | default(false) | bool) else []) }}"
+  register: ssh_refresh_out
+  changed_when: "'nothing to do' not in ssh_refresh_out.stdout"
   tags: [ssh_ca]
 
-# ── enroll + install, only when needed ──────────────────────────────────────
-- name: "ssh_ca: enroll and install the SSH CA trust material"
-  when: needs_enroll
+# ── not enrolled: first enrollment with a backend-issued one-time code ───────
+- name: "ssh_ca: first enrollment"
+  when: not cert_stat.stat.exists
   tags: [ssh_ca]
   block:
-    # Derive the current device TOTP on the controller — it is the AES pass for
-    # the enrollment envelope. The backend packs identifiers only (device_uuid /
-    # network_id / domain_id / totp_counter), NOT the code; ssh-ca derives the
-    # same secret `<domain>-<network>-<device>-<counter>` and matches within ±1
-    # step (decision-009; _shared/device-auth.ts). Computed here, right before
-    # the POST, because the code is only valid for a 600 s window. A caller that
-    # already supplied enroll_totp (a manual/standalone run) keeps it.
-    - name: "ssh_ca: derive the current device TOTP (controller-side)"
-      when: enroll_totp is not defined or not enroll_totp
-      delegate_to: localhost
-      ansible.builtin.command:
-        argv:
-          - python3
-          - -c
-          - |
-            import hmac, hashlib, struct, time, sys
-            domain, network, dev, ctr = sys.argv[1:5]
-            secret = f"{domain}-{network}-{dev}-{ctr}".encode()
-            step = int(time.time()) // 600
-            h = hmac.new(secret, struct.pack(">Q", step), hashlib.sha1).digest()
-            o = h[-1] & 0x0f
-            b = ((h[o] & 0x7f) << 24) | ((h[o+1] & 0xff) << 16) | ((h[o+2] & 0xff) << 8) | (h[o+3] & 0xff)
-            print(str(b % 1000000).zfill(6))
-          - "{{ domain_id }}"
-          - "{{ network_id }}"
-          - "{{ device_uuid }}"
-          - "{{ totp_counter | default(0) | string }}"
-      register: totp_out
-      changed_when: false
-      no_log: true
-
-    - name: "ssh_ca: set enroll_totp fact"
-      ansible.builtin.set_fact:
-        enroll_totp: "{{ enroll_totp | default(totp_out.stdout | trim) }}"
-      no_log: true
-
-    # PROOF-OF-CONTINUITY (task-075 / decision-028 §12): if this device already
-    # has a host certificate, this is a RE-enroll — the ssh-ca edge function will
-    # demand proof of possession of the existing host key. Sign the challenge
-    # `<device_id>\n<normalized new host_pubkey>\n<TOTP>` with the EXISTING host
-    # private key ON THE GATEWAY (it never leaves the box; no delegate_to). A
-    # first enroll (no prior cert) skips this — the edge fn then treats it as
-    # one-shot. Key rotation (deleting the old key) intentionally cannot prove
-    # continuity and must go through offboard + re-provision.
-    - name: "ssh_ca: sign the re-enroll continuity challenge with the existing host key"
-      when: cert_stat.stat.exists
-      ansible.builtin.shell:
-        cmd: |
-          set -euo pipefail
-          norm="$(printf '%s' {{ host_pubkey | quote }} | awk '{print $1" "$2}')"
-          ch="$(mktemp)"
-          printf '%s\n%s\n%s' {{ device_id | quote }} "$norm" {{ enroll_totp | quote }} > "$ch"
-          ssh-keygen -Y sign -f /etc/ssh/ssh_host_ecdsa_key -n iotgw-reenroll "$ch" >/dev/null 2>&1
-          cat "$ch.sig"
-          rm -f "$ch" "$ch.sig"
-        executable: /bin/bash
-      register: continuity_out
-      changed_when: false
-      no_log: true
-
-    - name: "ssh_ca: set continuity_sig fact (re-enroll only)"
-      when: cert_stat.stat.exists
-      ansible.builtin.set_fact:
-        continuity_sig: "{{ continuity_out.stdout }}"
-      no_log: true
-
-    - name: "ssh_ca: write the enrollment request JSON (controller-side, transient)"
-      delegate_to: localhost
-      vars:
-        enroll_body: >-
-          {{
-            {'device_id': device_id, 'action': 'enroll', 'host_pubkey': host_pubkey}
-            | combine({'continuity_sig': continuity_sig}
-                      if (continuity_sig is defined and continuity_sig) else {})
-            | to_json
-          }}
-      ansible.builtin.copy:
-        content: "{{ enroll_body }}"
-        dest: "/tmp/ssh_ca_req.{{ inventory_hostname }}.json"
-        mode: "0600"
-      changed_when: false
-
-    - name: "ssh_ca: encrypt → POST → decrypt the enrollment (controller-side)"
-      delegate_to: localhost
-      ansible.builtin.shell:
-        cmd: |
-          set -euo pipefail
-          req=/tmp/ssh_ca_req.{{ inventory_hostname }}.json
-          openssl enc -aes-256-cbc -pbkdf2 -iter 300000 -salt -pass pass:{{ enroll_totp | quote }} -in "$req" \
-            | curl -fsS -m 30 -X POST "{{ ssh_ca_endpoint }}?device_id={{ device_id | urlencode }}" \
-                {% if supabase_anon_key is defined and supabase_anon_key %}-H "Authorization: Bearer {{ supabase_anon_key }}" {% endif %}-H "Content-Type: application/octet-stream" --data-binary @- \
-            | openssl enc -d -aes-256-cbc -pbkdf2 -iter 300000 -pass pass:{{ enroll_totp | quote }}
-          rm -f "$req"
-        executable: /bin/bash
-      register: enroll_raw
-      no_log: true
-      changed_when: true
-
-    - name: "ssh_ca: parse the (decrypted) enrollment response"
-      ansible.builtin.set_fact:
-        enroll: "{{ enroll_raw.stdout | from_json }}"
-
-    - name: "ssh_ca: fail closed if the response is missing trust material"
+    - name: "ssh_ca: require the device uuid and the backend credential"
       ansible.builtin.assert:
         that:
-          - enroll.host_cert is defined and enroll.host_cert | length > 0
-          - enroll.user_ca is defined and enroll.user_ca | length > 0
-        fail_msg: "ssh-ca edge function returned no host_cert/user_ca — refusing to touch sshd"
+          - device_uuid is defined and device_uuid | length > 0
+          - lookup('ansible.builtin.env', 'OPS_CERT_MINT_TOKEN') | length > 0
+        fail_msg: >-
+          First SSH enrollment needs json_data.device_uuid and the runner's
+          OPS_CERT_MINT_TOKEN (ops-cert-mint Secret) to get a one-time code.
+        quiet: true
 
-    - name: "ssh_ca: ensure /etc/ssh/auth_principals exists (absent on OpenWRT)"
-      ansible.builtin.file:
-        path: /etc/ssh/auth_principals
-        state: directory
-        mode: "0755"
+    - name: "ssh_ca: get a one-time code for this device from the backend (controller-side)"
+      delegate_to: localhost
+      ansible.builtin.uri:
+        url: "{{ iotgw_backend_url }}/internal/devices/enroll-code"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ lookup('ansible.builtin.env', 'OPS_CERT_MINT_TOKEN') }}"
+        body_format: json
+        body:
+          device_uuid: "{{ device_uuid }}"
+        return_content: true
+      register: enroll_code
+      no_log: true
 
-    - name: "ssh_ca: install the host certificate"
-      ansible.builtin.copy:
-        content: "{{ enroll.host_cert }}"
-        dest: /etc/ssh/ssh_host_ecdsa_key-cert.pub
-        mode: "0644"
-
-    - name: "ssh_ca: install the domain Host CA (the iotgw dashboard checks the host cert against it)"
-      when: enroll.host_ca is defined and enroll.host_ca | length > 0
-      ansible.builtin.copy:
-        content: "{{ enroll.host_ca }}"
-        dest: /etc/ssh/ssh-host-ca.pub
-        mode: "0644"
-
-    - name: "ssh_ca: install the User CA trust anchor"
-      ansible.builtin.copy:
-        content: "{{ enroll.user_ca }}"
-        dest: /etc/ssh/ssh-user-ca.pub
-        mode: "0444"
-
-    - name: "ssh_ca: install auth_principals/root (iotgw-admin, iotgw-ops)"
-      ansible.builtin.copy:
-        content: |
-          iotgw-admin
-          iotgw-ops
-        dest: /etc/ssh/auth_principals/root
-        mode: "0644"
-
-    - name: "ssh_ca: ensure an empty RevokedKeys file (sshd won't start if it is missing)"
-      ansible.builtin.copy:
-        content: ""
-        dest: /etc/ssh/revoked_keys
-        force: false
-        mode: "0600"
-
-    - name: "ssh_ca: 50- break-glass drop-in (sorts before 60- so raw keys keep working)"
-      ansible.builtin.copy:
-        content: |
-          # iotgw-ng break-glass (decision-028 §11). Managed by ssh_ca — do not edit.
-          AuthorizedKeysFile .ssh/authorized_keys
-        dest: /etc/ssh/sshd_config.d/50-iotgw-authorized-keys.conf
-        mode: "0644"
-
-    - name: "ssh_ca: 60- SSH CA drop-in (host cert + user CA trust)"
-      ansible.builtin.copy:
-        content: |
-          # iotgw-ng SSH CA (decision-024/026). Managed by ssh_ca — do not edit.
-          HostKey /etc/ssh/ssh_host_ecdsa_key
-          HostCertificate /etc/ssh/ssh_host_ecdsa_key-cert.pub
-          TrustedUserCAKeys /etc/ssh/ssh-user-ca.pub
-          AuthorizedPrincipalsFile /etc/ssh/auth_principals/%u
-          RevokedKeys /etc/ssh/revoked_keys
-        dest: /etc/ssh/sshd_config.d/60-iotgw-ssh-ca.conf
-        mode: "0644"
-
-    # OpenWRT's openssh-server ships the Include; a base/dropbear sshd_config may not.
-    - name: "ssh_ca: ensure sshd_config includes the drop-in directory"
-      ansible.builtin.lineinfile:
-        path: /etc/ssh/sshd_config
-        line: "Include /etc/ssh/sshd_config.d/*.conf"
-        insertbefore: BOF
-        validate: "/usr/sbin/sshd -t -f %s"
-
-    # ── validate, then reload — never restart; fail-safe on a bad config ────
-    - name: "ssh_ca: validate the resulting sshd configuration"
+    - name: "ssh_ca: enroll through the agent with that code"
       ansible.builtin.command:
-        cmd: "{{ sshd_bin }} -t"
-      register: sshd_check
-      changed_when: false
-      failed_when: false
+        argv:
+          - /usr/sbin/iotgw
+          - ssh
+          - refresh
+          - -otp
+          - "{{ enroll_code.json.code }}"
+      register: ssh_refresh_out
+      no_log: true   # the argv carries the one-time code
+  rescue:
+    - name: "ssh_ca: why the first enrollment failed (agent messages only, no code)"
+      ansible.builtin.debug:
+        msg: "{{ (ssh_refresh_out.stderr_lines | default([])) + (ssh_refresh_out.stdout_lines | default([])) if ssh_refresh_out is defined else 'no one-time code from the backend: ' ~ (enroll_code.status | default('unreachable')) }}"
+    - name: "ssh_ca: fail"
+      ansible.builtin.fail:
+        msg: >-
+          First SSH enrollment failed (see above). A 409 / "already enrolled"
+          means the server still has this device's previous host key: use
+          "Reset SSH enrollment" on the device page, then re-run.
 
-    - name: "ssh_ca: ROLLBACK — remove the drop-ins if sshd -t failed"
-      when: sshd_check.rc != 0
-      block:
-        - name: "ssh_ca: remove the iotgw drop-ins"
-          ansible.builtin.file:
-            path: "/etc/ssh/sshd_config.d/{{ item }}"
-            state: absent
-          loop:
-            - 50-iotgw-authorized-keys.conf
-            - 60-iotgw-ssh-ca.conf
-        # NEVER reload a config sshd -t still rejects — on OpenWRT `reload` with a
-        # bad config takes sshd DOWN (found the hard way, task-089). Re-validate
-        # after removing OUR drop-ins; only reload if the tree is clean again,
-        # otherwise leave the RUNNING sshd exactly as it is (still serving).
-        - name: "ssh_ca: re-validate sshd after removing the drop-ins"
-          ansible.builtin.command:
-            cmd: "{{ sshd_bin }} -t"
-          register: sshd_recheck
-          changed_when: false
-          failed_when: false
-        - name: "ssh_ca: reload sshd back to last-good ONLY if the config is valid again"
-          ansible.builtin.command:
-            cmd: "{{ ssh_reload_cmd }}"
-          when: sshd_recheck.rc == 0
-          changed_when: true
-        - name: "ssh_ca: fail loudly (running sshd left untouched, gateway reachable)"
-          ansible.builtin.fail:
-            msg: >-
-              sshd -t rejected the enrollment config; our drop-ins were removed and sshd was
-              {{ 'reloaded to last-good' if sshd_recheck.rc == 0 else 'left running as-is (config still invalid from another drop-in — NOT reloaded)' }}.
-              stderr: {{ sshd_check.stderr }}
-
-    - name: "ssh_ca: reload sshd (never restart) to pick up the drop-ins"
-      ansible.builtin.command:
-        cmd: "{{ ssh_reload_cmd }}"
-      when: sshd_check.rc == 0
-      changed_when: true
+- name: "ssh_ca: agent output"
+  ansible.builtin.debug:
+    msg: "{{ ssh_refresh_out.stdout_lines | default([]) }}"
+  tags: [ssh_ca]
 
 # ── assert BOTH auth paths are live (always, even on a no-op run) ────────────
 - name: "ssh_ca: read the effective sshd config"
