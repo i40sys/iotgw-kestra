@@ -34,6 +34,7 @@
     owner: root
     group: root
     mode: '0640'
+  no_log: true  # renders secrets (task-130)
 
 - name: "telegraf: Start Docker stack"
   community.docker.docker_compose_v2:

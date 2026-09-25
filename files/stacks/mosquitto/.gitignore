@@ -1,3 +1,3 @@
 data/
-etc/
+etc/*
 !etc/mosquitto.conf.j2

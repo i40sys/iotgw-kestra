@@ -1,3 +1,11 @@
+# Keep the previous file OUTSIDE /etc/config (uci would parse a backup there as
+# another package) so a bad rewrite can be rolled back by hand (task-130).
+- name: "firewall: back up the current /etc/config/firewall"
+  ansible.builtin.shell: |
+    mkdir -p /root/.iotgw-provisioning-backup
+    [ ! -f /etc/config/firewall ] || cp -p /etc/config/firewall /root/.iotgw-provisioning-backup/firewall.$(date +%Y%m%dT%H%M%S)
+    chmod 0700 /root/.iotgw-provisioning-backup
+
 - name: "firewall: configuration"
   ansible.builtin.template:
     src: templates/firewall.j2
@@ -14,14 +22,14 @@
     mode: '0644'
 - name: "firewall: Add Internet allowed IPs"
   ansible.builtin.shell: |
-    IP_SET_ID=$(uci show firewall | grep \@ipset|grep \'AllowedInternet\' | cut -f 2 -d "[" | cut -f 0 -d "]")
+    IP_SET_ID=$(uci show firewall | grep \@ipset|grep \'AllowedInternet\' | cut -f 2 -d "[" | cut -f 1 -d "]")
     uci add_list firewall.@ipset[${IP_SET_ID}].entry='{{ item.ip }}'
   loop: "{{ allowed_internet }}"
   when: allowed_internet is defined and allowed_internet | length > 0
 
 - name: "firewall: Add Management IPs"
   ansible.builtin.shell: |
-    IP_SET_ID=$(uci show firewall | grep \@ipset|grep \'ManagementIPs\' | cut -f 2 -d "[" | cut -f 0 -d "]")
+    IP_SET_ID=$(uci show firewall | grep \@ipset|grep \'ManagementIPs\' | cut -f 2 -d "[" | cut -f 1 -d "]")
     uci add_list firewall.@ipset[${IP_SET_ID}].entry='{{ item.cidr }}'
   loop: "{{ management_cidrs }}"
   when: management_cidrs is defined and management_cidrs | length > 0

@@ -10,8 +10,10 @@ inputs:
 tasks:
   - id: dump_input
     type: io.kestra.plugin.core.log.Log
+    # task-130: json_data now carries the provisioning SECRETS (root_password,
+    # OAuth2 client secrets, API keys…) — log the key NAMES only, never values.
     message:
-      - "Full JSON data: {{ inputs.json_data | json }}"
+      - "json_data keys: {{ inputs.json_data | keys | join(',') }}"
       - "Tags: {{ inputs.json_data.__tags__ | default([]) | join(',') }}"
 
   - id: create_inventory_file
@@ -76,6 +78,11 @@ tasks:
     # op instead of 137 tiny execs, and it always runs HEAD of main.
     inputFiles:
       inventory.yml: "{{ outputs.create_inventory_file.value }}"
+      # task-130: the deployment configuration goes to ansible as a FILE
+      # (-e @vars.json), not inlined into the container command — inline it put
+      # every secret into the pod spec and a single quote in any value broke
+      # the shell line.
+      vars.json: "{{ inputs.json_data | json }}"
     spec:
       restartPolicy: Never
       containers:
@@ -181,8 +188,8 @@ tasks:
                 fi
               fi
               {% if inputs.json_data.__tags__ is defined and inputs.json_data.__tags__ | length > 0 %}
-              ansible-playbook -i inventory.yml i11_provisioning_iotgw.yaml -e '{{ inputs.json_data | json }}' -e supabase_anon_key="$SUPABASE_ANON_KEY" --tags '{{ inputs.json_data.__tags__ | join(",") }}'
+              ansible-playbook -i inventory.yml i11_provisioning_iotgw.yaml -e @vars.json -e supabase_anon_key="$SUPABASE_ANON_KEY" --tags '{{ inputs.json_data.__tags__ | join(",") }}'
               {% else %}
-              ansible-playbook -i inventory.yml i11_provisioning_iotgw.yaml -e '{{ inputs.json_data | json }}' -e supabase_anon_key="$SUPABASE_ANON_KEY"
+              ansible-playbook -i inventory.yml i11_provisioning_iotgw.yaml -e @vars.json -e supabase_anon_key="$SUPABASE_ANON_KEY"
               {% endif %}
           workingDir: "{{ workingDir }}"

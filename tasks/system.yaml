@@ -60,6 +60,7 @@
     name: root
     password: "{{ root_password | password_hash('sha512') }}"
     shell: /bin/bash
+  no_log: true
 
 - name: "system: Replace sftp-server with internal-sftp in sshd_config"
   lineinfile:
@@ -105,6 +106,7 @@
     mode: "0600"
   when: deploy_shared_ssh_key | default(false) | bool
 
+# Also tagged `ntp`: `--tags ntp` re-renders only hostname + NTP servers.
 - name: "system: configuration"
   ansible.builtin.template:
     src: templates/system.j2
@@ -112,6 +114,7 @@
     owner: root
     group: root
     mode: '0644'
+  tags: [ntp]
 
 - name: "system, luci: dark mode"
   uci:
@@ -132,25 +135,66 @@
       echo $(uci get system.@system[0].hostname) > /proc/sys/kernel/hostname
       echo $(uci get system.@system[0].hostname) > /etc/machine-id
 
+# templates/network.j2 REWRITES /etc/config/network wholesale, including the
+# WireGuard management VPN (wg0) — on a gateway reached only through that VPN a
+# wrong or empty wg0 is a lock-out at the next network reload/reboot. The wg0
+# values are therefore NOT taken from the deployment JSON: they are read back
+# from the gateway's live config (written at install by files/setup_vpn.sh and
+# kept by the iotgw agent, decision-032), asserted complete, and re-emitted
+# verbatim. `vpn_*` extra-vars are only a fallback for a gateway that has no
+# wg0 yet (iotgw-ng task-130).
+- name: "system, network: read the gateway's live WireGuard (wg0) configuration"
+  ansible.builtin.shell: |
+    printf 'private_key=%s\n'   "$(uci -q get network.wg0.private_key)"
+    printf 'addresses=%s\n'     "$(uci -q get network.wg0.addresses)"
+    printf 'public_key=%s\n'    "$(uci -q get network.@wireguard_wg0[0].public_key)"
+    printf 'endpoint_host=%s\n' "$(uci -q get network.@wireguard_wg0[0].endpoint_host)"
+    printf 'endpoint_port=%s\n' "$(uci -q get network.@wireguard_wg0[0].endpoint_port)"
+  register: wg0_live
+  changed_when: false
+  no_log: true
+
+- name: "system, network: wg0 values to re-emit (live gateway first, vpn_* fallback)"
+  ansible.builtin.set_fact:
+    iotgw_wg0_private_key: "{{ (wg0_live.stdout | regex_search('^private_key=(.*)$', '\\1', multiline=True) or ['']) | first or vpn_private_key | default('') }}"
+    iotgw_wg0_addresses: "{{ (wg0_live.stdout | regex_search('^addresses=(.*)$', '\\1', multiline=True) or ['']) | first or vpn_ip_address | default('') }}"
+    iotgw_wg0_public_key: "{{ (wg0_live.stdout | regex_search('^public_key=(.*)$', '\\1', multiline=True) or ['']) | first or vpn_public_key | default('') }}"
+    iotgw_wg0_endpoint_host: "{{ (wg0_live.stdout | regex_search('^endpoint_host=(.*)$', '\\1', multiline=True) or ['']) | first or vpn_server_ip | default('') }}"
+    iotgw_wg0_endpoint_port: "{{ (wg0_live.stdout | regex_search('^endpoint_port=(.*)$', '\\1', multiline=True) or ['']) | first or vpn_server_port | default('') }}"
+  no_log: true
+
+- name: "system, network: refuse to rewrite /etc/config/network without a complete wg0"
+  ansible.builtin.assert:
+    that:
+      - iotgw_wg0_private_key | trim | length > 0
+      - iotgw_wg0_addresses | trim | length > 0
+      - iotgw_wg0_public_key | trim | length > 0
+      - iotgw_wg0_endpoint_host | trim | length > 0
+      - (iotgw_wg0_endpoint_port | string) is match('^[0-9]+$')
+    fail_msg: >-
+      Refusing to rewrite /etc/config/network: the gateway has no complete wg0
+      (WireGuard) configuration and no vpn_* fallback was supplied. Rewriting it
+      would drop the management VPN. Check `uci show network.wg0` on the gateway.
+    quiet: true
+
+# Keep the previous file OUTSIDE /etc/config (uci would parse a backup there as
+# another package) so a bad rewrite can be rolled back by hand (task-130).
+- name: "system, network: back up the current /etc/config/network"
+  ansible.builtin.shell: |
+    mkdir -p /root/.iotgw-provisioning-backup
+    [ ! -f /etc/config/network ] || cp -p /etc/config/network /root/.iotgw-provisioning-backup/network.$(date +%Y%m%dT%H%M%S)
+    chmod 0700 /root/.iotgw-provisioning-backup
+
 - name: "system, network: configuration"
   ansible.builtin.template:
     src: templates/network.j2
     dest: /etc/config/network
     owner: root
     group: root
-    mode: '0644'
+    mode: '0600'
+  no_log: true
 
 # uci import network < /tmp/network_backup.conf
-
-- name: "OpenWRT: Add network host entries using UCI"
-  ansible.builtin.shell: |
-    uci add dhcp host
-    uci set dhcp.@host[-1].name='{{ item.name }}'
-    uci set dhcp.@host[-1].ip='{{ item.ip }}'
-    uci add_list dhcp.@host[-1].mac='{{ item.mac }}'
-    uci set dhcp.@host[-1].leasetime='24h'
-  loop: "{{ dhcp_hosts }}"
-  when: dhcp_hosts is defined and dhcp_hosts | length > 0
 
 - name: "system, dhcp: configuration"
   ansible.builtin.template:
@@ -159,6 +203,25 @@
     owner: root
     group: root
     mode: '0644'
+
+# Static leases AFTER the dhcp template (which rewrites the file) and committed
+# here: before task-130 they were staged BEFORE the rewrite and only persisted
+# if a later tag happened to run `uci commit` — `--tags system` lost them.
+- name: "system, dhcp: static leases (dhcp_hosts)"
+  ansible.builtin.shell: |
+    uci add dhcp host
+    uci set dhcp.@host[-1].name='{{ item.name }}'
+    uci set dhcp.@host[-1].ip='{{ item.ip }}'
+    uci add_list dhcp.@host[-1].mac='{{ item.mac }}'
+    uci set dhcp.@host[-1].leasetime='24h'
+  loop: "{{ dhcp_hosts }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: dhcp_hosts is defined and dhcp_hosts is not none and dhcp_hosts | length > 0
+
+- name: "system, dhcp: commit static leases"
+  ansible.builtin.command: uci commit dhcp
+  when: dhcp_hosts is defined and dhcp_hosts is not none and dhcp_hosts | length > 0
 
 - name: "system, dockerd: configuration"
   ansible.builtin.template:
