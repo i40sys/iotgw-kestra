@@ -3,18 +3,25 @@
   hosts: all
   remote_user: root
   gather_facts: false
-  vars:
-    iotgw_hostname: iot-gw_maq0
-    root_password: none
-    local_ip_address: 10.121.100.1
-    local_domain: localdomain
-    main_local_dns: 127.0.0.1
-    zeroter_network_id: '00000000'
+  # iotgw-ng task-130: NO play-level defaults for the gateway's identity or
+  # network. The former demo vars (iotgw_hostname iot-gw_maq0, root_password
+  # "none", local_ip_address 10.121.100.1, local_domain, main_local_dns and the
+  # misspelt, unused zeroter_network_id) were silently applied to any gateway
+  # whose deployment JSON lacked them. Every value now comes from the deployment
+  # configuration (Kestra json_data -> extra-vars) and tasks/preflight.yaml
+  # asserts it, per enabled stack, before anything touches the gateway.
+  # Contract: iotgw-ng iotgw-ui/packages/supabase-contract/src/deployment-config.schema.json
+
+  pre_tasks:
+    - import_tasks: tasks/preflight.yaml
+      tags: always
+
   roles:
     - gekmihesg.openwrt
     # - i40sys.iot_stack  
 
   tasks:
+    # `system` also carries the `ntp` tag on its /etc/config/system task.
     - import_tasks: tasks/system.yaml
       tags: system
 
@@ -27,8 +34,11 @@
     - import_tasks: tasks/ssh_ca.yaml
       tags: ssh_ca
 
+    # Stacks with an enable flag in the deployment JSON run only when their tag
+    # is selected AND the flag is not false (tasks/preflight.yaml, task-130).
     - import_tasks: tasks/firewall.yaml
       tags: firewall
+      when: iotgw_stack_enabled['firewall']
 
     - import_tasks: tasks/syslog.yaml
       tags: syslog
@@ -38,6 +48,7 @@
 
     - import_tasks: tasks/credentials.yaml
       tags: credentials
+      when: iotgw_stack_enabled['credentials']
 
     - import_tasks: tasks/dockge.yaml
       tags: dockge
@@ -47,33 +58,42 @@
 
     - import_tasks: tasks/containers_exporter.yaml
       tags: observability
+      when: iotgw_stack_enabled['observability']
 
     - import_tasks: tasks/uptime-kuma.yaml
       tags: observability
+      when: iotgw_stack_enabled['observability']
 
     - import_tasks: tasks/observability.yaml
       tags: observability
+      when: iotgw_stack_enabled['observability']
 
     - import_tasks: tasks/mosquitto.yaml
       tags: mosquitto
+      when: iotgw_stack_enabled['mosquitto']
 
     - import_tasks: tasks/glpi-agent.yaml
       tags: glpi-agent
+      when: iotgw_stack_enabled['glpi-agent']
 
     - import_tasks: tasks/telegraf.yaml
       tags: telegraf
+      when: iotgw_stack_enabled['telegraf']
 
     - import_tasks: tasks/duplicati.yaml
       tags: duplicati
+      when: iotgw_stack_enabled['duplicati']
 
     - import_tasks: tasks/nodered.yaml
       tags: nodered
+      when: iotgw_stack_enabled['nodered']
 
     - import_tasks: tasks/bugfixing.yaml
       tags: bugfixing
 
     - import_tasks: tasks/netxms-agent.yaml
       tags: netxms
+      when: iotgw_stack_enabled['netxms']
 
     - import_tasks: tasks/lldpd.yaml
       tags: lldpd

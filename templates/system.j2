@@ -17,5 +17,7 @@ config timeserver 'ntp'
 	option enable_server '1'
 	option interface 'lan'
 	list server '{{ primary_ntp }}'
+{% if secundary_ntp | default('') | trim %}
 	list server '{{ secundary_ntp }}'
+{% endif %}
 

@@ -1,0 +1,170 @@
+---
+# tasks/preflight.yaml — the provisioning VARIABLE CONTRACT (iotgw-ng task-130).
+#
+# Imported as `pre_tasks` (tags: always) by i11_provisioning_iotgw.yaml. Every
+# task here is controller-only (set_fact / assert / stat on localhost), so a bad
+# deployment JSON fails BEFORE anything is changed on the gateway — instead of an
+# `'primary_ntp' is undefined` crash half-way through `system` (gw-c3,
+# Kestra exec IeBFGp5yquThkwufsKKSp).
+#
+# The JSON Schema the UI renders is the source of truth for the key names:
+#   iotgw-ng  iotgw-ui/packages/supabase-contract/src/deployment-config.schema.json
+# Keep `iotgw_stack_contract` below in sync with it.
+#
+# A stack RUNS when BOTH hold:
+#   * its tag is selected — json_data.__tags__ becomes `--tags`; no tags = all;
+#   * its enable flag in the JSON is not false — firewall, credentials, obs,
+#     mqtt, glpi-agent, duplicati, telegraf, nodered, netxms (absent = enabled).
+# The play gates each import on `iotgw_stack_enabled[<tag>]`.
+#
+# A required value is MISSING when it is undefined, null, empty, or the
+# placeholder `CHANGE_ME` (so the example config can never be applied as-is).
+
+- name: "preflight: accept the deployment-JSON key names (aliases, backward compatible)"
+  ansible.builtin.set_fact:
+    # `secundary_ntp` (sic) is the historical name; `secondary_ntp` is accepted too.
+    secundary_ntp: "{{ secundary_ntp | default(secondary_ntp | default('')) }}"
+    # The JSON key is hyphenated (`glpi-agent`, like the tag); `glpi_agent` too.
+    iotgw_flag_glpi_agent: "{{ lookup('ansible.builtin.vars', 'glpi-agent', default=(glpi_agent | default(true))) }}"
+
+- name: "preflight: stack contract (tag -> enable flag -> required variables)"
+  ansible.builtin.set_fact:
+    iotgw_known_tags:
+      [all, always, tagged, untagged, system, ntp, ssh_ca, firewall, syslog, shell,
+       credentials, dockge, vscode, observability, mosquitto, glpi-agent, telegraf,
+       duplicati, nodered, bugfixing, netxms, lldpd, plc_sniffer]
+    iotgw_stack_contract:
+      - tag: system
+        flag: ~
+        required: [iotgw_hostname, root_password, local_ip_address, local_domain, main_local_dns, primary_ntp]
+      - tag: ntp          # re-renders /etc/config/system only (hostname + NTP)
+        flag: ~
+        required: [iotgw_hostname, primary_ntp]
+      - tag: firewall
+        flag: firewall
+        required: [local_ip_address]
+      - tag: credentials
+        flag: credentials
+        required: [ghcr_pat, notion_api_key]
+      - tag: vscode       # code-server PASSWORD = root_password
+        flag: ~
+        required: [root_password]
+      - tag: observability
+        flag: obs
+        required: [alloy_log_level, prometheus_url, prometheus_oauth2_token_url,
+                   prometheus_oauth2_client_id, prometheus_oauth2_client_secret,
+                   loki_url, loki_oauth2_token_url, loki_oauth2_client_id,
+                   loki_oauth2_client_secret, kuma_exporter_username,
+                   kuma_exporter_password, containers_exporter_port]
+      - tag: mosquitto
+        flag: mqtt
+        required: [iotgw_hostname, local_ip_address, iiot_host, iiot_mqtt_user,
+                   iiot_mqtt_password, mqtt_bridge_topics, emqx_api_url,
+                   emqx_api_key, emqx_api_secret]
+      - tag: glpi-agent
+        flag: iotgw_flag_glpi_agent
+        required: [glpi_server, glpi_user, glpi_password, ghcr_pat]
+      - tag: telegraf
+        flag: telegraf
+        required: [telegraf_config_url, influx_token]
+      - tag: duplicati
+        flag: duplicati
+        required: [duplicati_access_password, duplicati_docker_target_url, duplicati_system_target_url]
+      - tag: nodered
+        flag: nodered
+        required: [iotgw_hostname, nodered_user, nodered_password, github_org]
+      - tag: netxms
+        flag: netxms
+        required: [netxms_server_port, netxms_web_port, netxms_server_ip,
+                   netxms_master_servers, netxms_debug_level, proxy_agent, proxy_snmp]
+      - tag: plc_sniffer
+        flag: ~
+        required: [local_ip_address]
+
+- name: "preflight: reject unknown tags in json_data.__tags__"
+  ansible.builtin.assert:
+    that: (ansible_run_tags | difference(iotgw_known_tags)) | length == 0
+    fail_msg: >-
+      Unknown provisioning tag(s): {{ ansible_run_tags | difference(iotgw_known_tags) | join(', ') }}.
+      Valid tags: {{ iotgw_known_tags | difference(['all', 'always', 'tagged', 'untagged']) | join(', ') }}.
+    quiet: true
+
+- name: "preflight: resolve which stacks will run (tag selected AND flag not false)"
+  ansible.builtin.set_fact:
+    iotgw_stack_enabled: >-
+      {%- set ns = namespace(d={}) -%}
+      {%- for s in iotgw_stack_contract -%}
+      {%-   set selected = ('all' in ansible_run_tags or s.tag in ansible_run_tags) and s.tag not in ansible_skip_tags -%}
+      {%-   set flag_on = true if s.flag is none else (lookup('ansible.builtin.vars', s.flag, default=true) | bool) -%}
+      {%-   set ns.d = ns.d | combine({s.tag: (selected and flag_on)}) -%}
+      {%- endfor -%}
+      {{ ns.d }}
+
+- name: "preflight: stacks that will run"
+  ansible.builtin.debug:
+    msg: "{{ iotgw_stack_enabled | dict2items | selectattr('value') | map(attribute='key') | list }}"
+
+- name: "preflight: every enabled stack has its required variables"
+  ansible.builtin.assert:
+    that: _missing | length == 0
+    fail_msg: >-
+      Stack '{{ item.tag }}' is enabled but the deployment configuration lacks
+      (or leaves empty / CHANGE_ME): {{ _missing | join(', ') }}.
+      Fill them in the UI Provisioning step, or disable the stack
+      {%- if item.flag %} (set `{{ 'glpi-agent' if item.flag == 'iotgw_flag_glpi_agent' else item.flag }}: false`){% endif %}.
+    success_msg: "stack '{{ item.tag }}': all required variables present"
+    quiet: true
+  vars:
+    _missing: >-
+      {%- set ns = namespace(m=[]) -%}
+      {%- for v in item.required -%}
+      {%-   set val = lookup('ansible.builtin.vars', v, default='') -%}
+      {%-   if val is none or (val is string and (val | trim) in ['', 'CHANGE_ME']) or (val is iterable and val is not string and val | length == 0) -%}
+      {%-     set ns.m = ns.m + [v] -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ ns.m }}
+  loop: "{{ iotgw_stack_contract | selectattr('tag', 'in', iotgw_stack_enabled | dict2items | selectattr('value') | map(attribute='key') | list) | list }}"
+  loop_control:
+    label: "{{ item.tag }}"
+
+# ---- value shape checks (only for values that are present) -------------------
+
+- name: "preflight: value formats"
+  ansible.builtin.assert:
+    that:
+      - local_ip_address is not defined or local_ip_address is match('^(\d{1,3}\.){3}\d{1,3}$')
+      - main_local_dns is not defined or main_local_dns is match('^(\d{1,3}\.){3}\d{1,3}$')
+      - backup_local_dns is not defined or not backup_local_dns or backup_local_dns is match('^(\d{1,3}\.){3}\d{1,3}$')
+      - iotgw_hostname is not defined or iotgw_hostname is match('^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$')
+      - num_maquina is not defined or (num_maquina | string) is match('^\d+$')
+      - containers_exporter_port is not defined or (containers_exporter_port | string) is match('^\d+$')
+      - proxy_agent is not defined or (proxy_agent | string) in ['yes', 'no']
+      - proxy_snmp is not defined or (proxy_snmp | string) in ['yes', 'no']
+      - dhcp_hosts is not defined or dhcp_hosts is none or (dhcp_hosts | rejectattr('name', 'defined') | list + dhcp_hosts | rejectattr('ip', 'defined') | list + dhcp_hosts | rejectattr('mac', 'defined') | list) | length == 0
+      - allowed_internet is not defined or allowed_internet is none or allowed_internet | rejectattr('ip', 'defined') | list | length == 0
+      - management_cidrs is not defined or management_cidrs is none or management_cidrs | rejectattr('cidr', 'defined') | list | length == 0
+      - users is not defined or users is none or (users | rejectattr('username', 'defined') | list + users | rejectattr('password', 'defined') | list) | length == 0
+      - mqtt_bridge_topics is not defined or (mqtt_bridge_topics is iterable and mqtt_bridge_topics is not string)
+    fail_msg: >-
+      A provisioning value has the wrong shape (IPv4 addresses, hostname,
+      integer ports, "yes"/"no" NetXMS proxies, dhcp_hosts[{name,ip,mac}],
+      allowed_internet[{ip}], management_cidrs[{cidr}], users[{username,password}],
+      mqtt_bridge_topics[string]). See the failed assertion above.
+    quiet: true
+
+# ---- vendored stack files the enabled stacks need on the controller ----------
+
+- name: "preflight: vendored stack templates exist for the enabled stacks"
+  ansible.builtin.assert:
+    that: (playbook_dir ~ '/files/' ~ item.path) is file
+    fail_msg: >-
+      Stack '{{ item.tag }}' needs files/{{ item.path }}, which is not vendored in
+      this repo — the stack cannot be provisioned until it is (task-130 finding).
+    quiet: true
+  loop:
+    - {tag: mosquitto, path: stacks/mosquitto/etc/mosquitto.conf.j2}
+    - {tag: nodered, path: stacks/nodered/data/.config.projects.json.j2}
+  loop_control:
+    label: "{{ item.tag }}"
+  when: iotgw_stack_enabled[item.tag] | default(false)

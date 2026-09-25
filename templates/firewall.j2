@@ -203,10 +203,24 @@ config ipset
   list entry '127.0.0.0/8'
   list entry '10.2.0.47/32'
 
+{% if netxms_server_ip | default('') | trim %}
 config rule
   option name 'netxms'
   list proto 'tcp'
   option src '*'
-  list src_ip '192.168.1.22'
+  list src_ip '{{ netxms_server_ip }}'
   option dest_port '4700'
   option target 'ACCEPT'
+{% endif %}
+
+# The WireGuard management VPN (wg0). This template REWRITES
+# /etc/config/firewall wholesale, so it must carry the zone that
+# files/setup_vpn.sh created at install time — without it provisioning silently
+# dropped the VPN's zone (masq/forwarding) from the gateway (iotgw-ng task-130).
+config zone 'vpn'
+  option name 'vpn'
+  list network 'wg0'
+  option input 'ACCEPT'
+  option output 'ACCEPT'
+  option forward 'ACCEPT'
+  option masq '1'
