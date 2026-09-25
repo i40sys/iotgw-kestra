@@ -61,6 +61,26 @@
     group: root
   tags: [iotgw]
 
+# decision-035: the device API is HTTPS with a PINNED CA. The live image that ran
+# this install already trusts the site's CA (its overlay ships
+# /etc/iotgw/api-ca.pem); carry that exact file into the new OS so the installed
+# agent pins the same CA the live image used for api_base (the package also ships
+# a copy — the live image's wins).
+- name: "iotgw: does the live image pin a device-API CA?"
+  ansible.builtin.stat:
+    path: /etc/iotgw/api-ca.pem
+  register: iotgw_live_ca
+  tags: [iotgw]
+
+- name: "iotgw: carry the live image's device-API CA into the new OS"
+  when: iotgw_live_ca.stat.exists
+  ansible.builtin.copy:
+    src: /etc/iotgw/api-ca.pem
+    dest: /mnt/p2/etc/iotgw/api-ca.pem
+    remote_src: true
+    mode: "0644"
+  tags: [iotgw]
+
 - name: "iotgw: keep the vpn API's configuration (0600, holds the private key)"
   ansible.builtin.command:
     cmd: install -D -m 0600 /etc/wireguard/wg0.server.conf /mnt/p2/etc/iotgw/wg0.server.conf
