@@ -56,3 +56,6 @@ This repository contains Kestra workflows and Ansible playbooks for automated pr
   enabled stack (tag selected AND enable flag not false), value shapes. Keep both in sync.
 - `templates/network.j2` / `templates/firewall.j2` rewrite `/etc/config/{network,firewall}` wholesale;
   wg0 is re-read from the gateway and asserted first — never feed WireGuard values from the UI.
+- The LAN netmask is never a constant (task-131): `local_netmask` (dotted or prefix 8-30) or, when empty,
+  the gateway's current `network.lan.netmask`; `tasks/system.yaml` checks the address, DHCP pool and
+  `dhcp_hosts` fit it before touching the gateway.

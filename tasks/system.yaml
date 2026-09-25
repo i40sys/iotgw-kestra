@@ -1,4 +1,106 @@
 ---
+# ---- LAN addressing (iotgw-ng task-131) — read-only, BEFORE any change -------
+# templates/network.j2 rewrites /etc/config/network wholesale. It used to
+# hard-code the LAN netmask to /26, which shrank gw-c3's /24 site LAN
+# (2026-09-25) and cut every host above .63 off its gateway. The netmask is
+# never a constant any more: it comes from `local_netmask` in the deployment
+# JSON (dotted or prefix length) or, when that is empty, from the gateway's
+# CURRENT lan netmask. Everything the rewrite depends on (the netmask, the
+# gateway address, the DHCP pool, the static leases) is checked here, before
+# the play installs or changes anything on the gateway.
+- name: "system, network: read the gateway's current LAN addressing"
+  ansible.builtin.shell: |
+    printf 'netmask=%s\n' "$(uci -q get network.lan.netmask)"
+    printf 'ipaddr=%s\n'  "$(uci -q get network.lan.ipaddr)"
+  register: lan_live
+  changed_when: false
+
+- name: "system, network: LAN netmask source (local_netmask first, then the gateway's current value)"
+  ansible.builtin.set_fact:
+    iotgw_lan_mask_src: >-
+      {%- set src = local_netmask | default('', true) | string | trim -%}
+      {%- if not src -%}
+      {%-   set live_mask = (lan_live.stdout | regex_search('^netmask=(.*)$', '\\1', multiline=True) or ['']) | first | trim -%}
+      {%-   set live_ip = (lan_live.stdout | regex_search('^ipaddr=(.*)$', '\\1', multiline=True) or ['']) | first | trim -%}
+      {%-   set src = live_mask if live_mask else (live_ip.split('/')[1] if '/' in live_ip else '') -%}
+      {%- endif -%}
+      {{ src }}
+
+- name: "system, network: LAN prefix length"
+  ansible.builtin.set_fact:
+    # 0 = could not be resolved (asserted below). A dotted mask is summed per
+    # octet; a non-contiguous one is caught by the round-trip check below.
+    iotgw_lan_prefix: >-
+      {%- set bits = {'255': 8, '254': 7, '252': 6, '248': 5, '240': 4, '224': 3, '192': 2, '128': 1, '0': 0} -%}
+      {%- if iotgw_lan_mask_src is match('^/?[0-9]{1,2}$') -%}
+      {{ iotgw_lan_mask_src | regex_replace('^/', '') | int }}
+      {%- elif iotgw_lan_mask_src is match('^([0-9]{1,3}\.){3}[0-9]{1,3}$') and (iotgw_lan_mask_src.split('.') | reject('in', bits) | list | length == 0) -%}
+      {{ iotgw_lan_mask_src.split('.') | map('extract', bits) | sum }}
+      {%- else -%}
+      0
+      {%- endif -%}
+
+- name: "system, network: LAN netmask, subnet size, gateway address and DHCP pool"
+  ansible.builtin.set_fact:
+    iotgw_lan_netmask: >-
+      {%- for i in range(4) -%}
+      {%-   set b = [[(iotgw_lan_prefix | int) - 8 * i, 0] | max, 8] | min -%}
+      {{ 256 - 2 ** (8 - b) }}{{ '.' if not loop.last }}
+      {%- endfor -%}
+    iotgw_lan_size: "{{ 2 ** (32 - (iotgw_lan_prefix | int)) }}"
+    iotgw_lan_ip_int: >-
+      {%- set o = local_ip_address.split('.') | map('int') | list -%}
+      {{ o[0] * 16777216 + o[1] * 65536 + o[2] * 256 + o[3] }}
+    # templates/dhcp.j2 serves offsets .40-.89 of the subnet; a smaller subnet
+    # gets a shorter pool that still ends before the broadcast address.
+    iotgw_dhcp_start: 40
+    iotgw_dhcp_limit: "{{ [50, 2 ** (32 - (iotgw_lan_prefix | int)) - 41] | min }}"
+
+- name: "system, network: refuse an invalid or unknown LAN netmask"
+  ansible.builtin.assert:
+    that:
+      - (iotgw_lan_prefix | int) >= 8 and (iotgw_lan_prefix | int) <= 30
+      - iotgw_lan_mask_src is not match('^([0-9]{1,3}\.){3}[0-9]{1,3}$') or iotgw_lan_mask_src == iotgw_lan_netmask
+    fail_msg: >-
+      Refusing to rewrite /etc/config/network: the LAN netmask
+      {{ ('local_netmask=' ~ iotgw_lan_mask_src) if (local_netmask | default('', true) | string | trim) else
+         ('read from the gateway (' ~ (iotgw_lan_mask_src or 'none') ~ ')') }}
+      is not a contiguous netmask / prefix between 8 and 30. Set `local_netmask`
+      (e.g. 255.255.255.0 or 24) in the deployment configuration.
+    quiet: true
+
+- name: "system, network: the LAN address, DHCP pool and static leases fit the netmask"
+  ansible.builtin.assert:
+    that:
+      - (iotgw_lan_ip_int | int) % (iotgw_lan_size | int) not in [0, (iotgw_lan_size | int) - 1]
+      - (iotgw_lan_dhcp_limit_ok | bool)
+      - _outside | length == 0
+    fail_msg: >-
+      LAN {{ local_ip_address }}/{{ iotgw_lan_prefix }}: the gateway address must be
+      a host address of the subnet, the subnet must hold the DHCP pool (offset 40,
+      so /26 or larger), and every dhcp_hosts ip must be inside it
+      {%- if _outside | length %} (outside: {{ _outside | join(', ') }}){% endif %}.
+    quiet: true
+  vars:
+    iotgw_lan_dhcp_limit_ok: "{{ (iotgw_dhcp_limit | int) >= 1 }}"
+    _outside: >-
+      {%- set ns = namespace(out=[]) -%}
+      {%- for h in (dhcp_hosts | default([], true)) -%}
+      {%-   set o = (h.ip | string).split('.') | map('int') | list -%}
+      {%-   set n = o[0] * 16777216 + o[1] * 65536 + o[2] * 256 + o[3] -%}
+      {%-   if n // (iotgw_lan_size | int) != (iotgw_lan_ip_int | int) // (iotgw_lan_size | int) or n % (iotgw_lan_size | int) in [0, (iotgw_lan_size | int) - 1] -%}
+      {%-     set ns.out = ns.out + [h.name ~ ' ' ~ h.ip] -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ ns.out }}
+
+- name: "system, network: LAN that will be written"
+  ansible.builtin.debug:
+    msg: >-
+      br-lan {{ local_ip_address }}/{{ iotgw_lan_prefix }} ({{ iotgw_lan_netmask }},
+      from {{ 'local_netmask' if (local_netmask | default('', true) | string | trim) else 'the gateway' }});
+      DHCP pool offset {{ iotgw_dhcp_start }}, {{ iotgw_dhcp_limit }} addresses
+
 - name: "system: checking resolv.conf link"
   ansible.builtin.file:
     src: /tmp/resolv.conf
