@@ -34,6 +34,7 @@
     owner: root
     group: root
     mode: '0640'
+  no_log: true  # renders secrets (task-130)
 
 - name: "duplicati: Fetch backup configuration templates {{ item }}"
   ansible.builtin.fetch:
@@ -51,6 +52,7 @@
     owner: root
     group: root
     mode: '0640'
+  no_log: true  # target URLs embed backend credentials (task-130)
   loop:
   - Docker-duplicati-config.json
   - System-duplicati-config.json

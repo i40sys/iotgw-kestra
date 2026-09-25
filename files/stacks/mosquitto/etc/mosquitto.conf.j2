@@ -1,0 +1,36 @@
+# Mosquitto on the IoT gateway — rendered by tasks/mosquitto.yaml.
+# Vendored in iotgw-ng task-130: the provisioning task always fetched this
+# template, but it was never committed (the old .gitignore `etc/` + `!etc/…`
+# cannot re-include a file under an excluded directory), so the `mosquitto`
+# stack failed on every run. Taken from this stack's README, with the
+# client-specific bridge topics lifted into `mqtt_bridge_topics`.
+{# SECRET: iiot_mqtt_password — the rendering task is no_log. #}
+
+# Bridge to the IIoT broker (EMQX)
+connection emqx1
+address {{ iiot_host }}
+bridge_protocol_version mqttv50
+remote_clientid mosquitto_{{ iotgw_hostname }}
+remote_username {{ iiot_mqtt_user }}
+remote_password {{ iiot_mqtt_password }}
+{% for t in mqtt_bridge_topics %}
+topic {{ t }}
+{% endfor %}
+
+# Listener (LAN address of the gateway)
+listener 1883 {{ local_ip_address }}
+
+# Security
+allow_anonymous false
+password_file /mosquitto/config/mqtt_users
+
+# Persistence
+persistence true
+autosave_interval 60
+persistence_file /mosquitto/data/persistence.db
+persistent_client_expiration 1d
+
+# Logging
+log_type information
+log_timestamp true
+log_dest stdout

@@ -29,22 +29,24 @@
     group: 1000
     mode: '0755'
 
+# task-130: the password travels in the container ENV, not interpolated into
+# JS source on the command line (a quote in it broke the command and it was
+# visible in the task args); the task and the hash are no_log.
 - name: "nodered: cyphering admin password"
   community.docker.docker_container:
     name: nodered_temp
     image: nodered/node-red:3.1
     entrypoint: /usr/local/bin/node
+    env:
+      NR_ADMIN_PASSWORD: "{{ nodered_password }}"
     command: >
-      -e "console.log(require('bcryptjs').hashSync('{{ nodered_password }}', 8));"
+      -e "console.log(require('bcryptjs').hashSync(process.env.NR_ADMIN_PASSWORD, 8));"
     network_mode: host
     auto_remove: false  # Disable auto_remove to capture the output
     detach: false       # Run in the foreground to capture output
     tty: false
   register: nodered_tmp
-
-- name: "nodered: show hashed password"
-  debug:
-    msg: "Hashed password is: {{ nodered_tmp.container.Output }}"
+  no_log: true
 
 - name: "nodered: remove temporary container"
   community.docker.docker_container:
@@ -64,6 +66,7 @@
     owner: root
     group: root
     mode: '0640'
+  no_log: true  # admin password hash
 
 - name: "nodered: Fetch .config.projects.json.j2"
   ansible.builtin.fetch:
