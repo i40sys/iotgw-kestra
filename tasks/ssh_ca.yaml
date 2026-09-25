@@ -55,10 +55,12 @@
   tags: [ssh_ca]
 
 # ── enrolled: renew with the host key (no code) ─────────────────────────────
+# NOTE: the gekmihesg.openwrt role re-implements modules in shell and does not
+# support `command: argv` — keep plain `cmd` strings.
 - name: "ssh_ca: renew through the agent (host-key signed, no code)"
   when: cert_stat.stat.exists
   ansible.builtin.command:
-    argv: "{{ ['/usr/sbin/iotgw', 'ssh', 'refresh'] + (['-force'] if (ssh_ca_force | default(false) | bool) else []) }}"
+    cmd: "/usr/sbin/iotgw ssh refresh{{ ' -force' if (ssh_ca_force | default(false) | bool) else '' }}"
   register: ssh_refresh_out
   changed_when: "'nothing to do' not in ssh_refresh_out.stdout"
   tags: [ssh_ca]
@@ -92,26 +94,27 @@
       register: enroll_code
       no_log: true
 
+    # The code goes to the gateway in a root-only file for this one call, so it
+    # never appears in a command line, in the task output or in `ps`; the
+    # command itself stays visible (its messages carry no code).
+    - name: "ssh_ca: hand the code to the gateway (root-only file, removed right after)"
+      ansible.builtin.copy:
+        content: "{{ enroll_code.json.code }}"
+        dest: /tmp/.iotgw-enroll-code
+        mode: "0600"
+      no_log: true
+
     - name: "ssh_ca: enroll through the agent with that code"
-      ansible.builtin.command:
-        argv:
-          - /usr/sbin/iotgw
-          - ssh
-          - refresh
-          - -otp
-          - "{{ enroll_code.json.code }}"
+      ansible.builtin.shell:
+        cmd: |
+          code="$(cat /tmp/.iotgw-enroll-code)"; rm -f /tmp/.iotgw-enroll-code
+          /usr/sbin/iotgw ssh refresh -otp "$code"
       register: ssh_refresh_out
-      no_log: true   # the argv carries the one-time code
-  rescue:
-    - name: "ssh_ca: why the first enrollment failed (agent messages only, no code)"
-      ansible.builtin.debug:
-        msg: "{{ (ssh_refresh_out.stderr_lines | default([])) + (ssh_refresh_out.stdout_lines | default([])) if ssh_refresh_out is defined else 'no one-time code from the backend: ' ~ (enroll_code.status | default('unreachable')) }}"
-    - name: "ssh_ca: fail"
-      ansible.builtin.fail:
-        msg: >-
-          First SSH enrollment failed (see above). A 409 / "already enrolled"
-          means the server still has this device's previous host key: use
-          "Reset SSH enrollment" on the device page, then re-run.
+  always:
+    - name: "ssh_ca: make sure the code file is gone"
+      ansible.builtin.file:
+        path: /tmp/.iotgw-enroll-code
+        state: absent
 
 - name: "ssh_ca: agent output"
   ansible.builtin.debug:
