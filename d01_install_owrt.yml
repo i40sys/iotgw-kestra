@@ -125,6 +125,13 @@
     - import_tasks: tasks/iotgw_agent.yaml
       tags: [iotgw]
 
+    # iotgw-ng task-153: enroll the installed OS in SSH-CA now, through its own
+    # agent (same files/drop-ins as provisioning's tasks/ssh_ca.yaml), with a
+    # backend-issued code — so it boots with its host certificate, provisioning
+    # reaches it with the iotgw-ops certificate, and no operator code is needed.
+    - import_tasks: tasks/ssh_ca_install.yaml
+      tags: [ssh_ca]
+
     - name: Copy script for unsetting up chroot
       ansible.builtin.copy:
         src: unchroot.sh
