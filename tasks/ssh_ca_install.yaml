@@ -1,0 +1,113 @@
+---
+# tasks/ssh_ca_install.yaml — SSH-CA enrollment of the freshly INSTALLED OpenWRT
+# (iotgw-ng task-153), run by d01_install_owrt.yml on the live-booted host while
+# the new rootfs is still mounted at /mnt/p2 (chroot.sh bound /dev, /proc, /sys).
+#
+# Same path as tasks/ssh_ca.yaml (provisioning) and the console's [s]: the
+# INSTALLED agent runs `iotgw ssh refresh` chrooted into the new rootfs, so it
+# writes the very same files under /etc/ssh — ecdsa host key (the private half
+# never leaves the gateway), host certificate, User/Host CA, auth_principals,
+# revoked_keys, the 50-/60- sshd_config.d drop-ins and the Include line — and
+# checks them with that rootfs's own `sshd -t` (OpenWRT's openssh-server),
+# restoring every file if it fails. `-offline` only skips the sshd reload and
+# the serving check: nothing runs sshd in the chroot; OpenWRT's /etc/init.d/sshd
+# serves the new identity from the first boot.
+#
+# The one-time code comes from the backend for this run (no operator code):
+# enroll-code with reinstall:true first clears the server's record of the
+# previous host key ("Reset SSH enrollment"), since an install always makes a
+# new one. Then provisioning reaches the gateway with the iotgw-ops user
+# certificate and only renews.
+#
+# Vars: device_uuid (json_data), iotgw_backend_url (default in-cluster).
+# Env on the runner pod: OPS_CERT_MINT_TOKEN.
+
+- name: "ssh_ca_install: require the device uuid and the backend credential"
+  ansible.builtin.assert:
+    that:
+      - device_uuid is defined and device_uuid | length > 0
+      - lookup('ansible.builtin.env', 'OPS_CERT_MINT_TOKEN') | length > 0
+    fail_msg: >-
+      Install-time SSH enrollment needs json_data.device_uuid and the runner's
+      OPS_CERT_MINT_TOKEN (ops-cert-mint Secret). Without them the installed
+      gateway boots unenrolled: provisioning cannot reach it with the iotgw-ops
+      certificate and an operator would need [s] with a one-time code.
+    quiet: true
+  tags: [ssh_ca]
+
+- name: "ssh_ca_install: get a one-time code, resetting the previous enrollment (controller-side)"
+  delegate_to: localhost
+  ansible.builtin.uri:
+    url: "{{ iotgw_backend_url | default('http://iotgw-ui-backend.iotgw-ui.svc.cluster.local:4444') }}/internal/devices/enroll-code"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ lookup('ansible.builtin.env', 'OPS_CERT_MINT_TOKEN') }}"
+    body_format: json
+    body:
+      device_uuid: "{{ device_uuid }}"
+      reinstall: true
+    return_content: true
+  register: enroll_code
+  no_log: true
+  tags: [ssh_ca]
+
+# The code goes in a root-only file inside the new rootfs, read and removed by
+# the chrooted command itself, so it never appears in a command line, in the
+# task output or in `ps`. The agent resolves the device API by name: give the
+# chroot the live image's resolv.conf for this one call (OpenWRT's
+# /etc/resolv.conf may be a dangling link into /tmp), and remove only what was
+# added.
+- name: "ssh_ca_install: enroll the installed rootfs through its agent (chroot, -offline)"
+  tags: [ssh_ca]
+  block:
+    - name: "ssh_ca_install: hand the code to the new rootfs (root-only file)"
+      ansible.builtin.copy:
+        content: "{{ enroll_code.json.code }}"
+        dest: /mnt/p2/tmp/.iotgw-enroll-code
+        mode: "0600"
+      no_log: true
+
+    - name: "ssh_ca_install: iotgw ssh refresh -offline in the new rootfs"
+      ansible.builtin.shell:
+        cmd: |
+          set -e
+          R=/mnt/p2/etc/resolv.conf added=""
+          if [ -L "$R" ]; then
+            t=$(readlink "$R"); case "$t" in /*) T="/mnt/p2$t" ;; *) T="/mnt/p2/etc/$t" ;; esac
+            if [ ! -e "$T" ]; then mkdir -p "$(dirname "$T")"; cp /etc/resolv.conf "$T"; added="$T"; fi
+          elif [ ! -e "$R" ]; then
+            cp /etc/resolv.conf "$R"; added="$R"
+          fi
+          trap 'if [ -n "$added" ]; then rm -f "$added"; fi' EXIT
+          chroot /mnt/p2 /bin/sh -c 'code="$(cat /tmp/.iotgw-enroll-code)"; rm -f /tmp/.iotgw-enroll-code; /usr/sbin/iotgw ssh refresh -offline -otp "$code"'
+        executable: /bin/bash
+      register: ssh_install_out
+  always:
+    - name: "ssh_ca_install: make sure the code file is gone"
+      ansible.builtin.file:
+        path: /mnt/p2/tmp/.iotgw-enroll-code
+        state: absent
+
+- name: "ssh_ca_install: agent output"
+  ansible.builtin.debug:
+    msg: "{{ ssh_install_out.stdout_lines | default([]) }}"
+  tags: [ssh_ca]
+
+# What the installed sshd will run with: certificate auth AND break-glass, the
+# same assertion tasks/ssh_ca.yaml makes on a running gateway.
+- name: "ssh_ca_install: read the installed rootfs's effective sshd config"
+  ansible.builtin.command:
+    cmd: chroot /mnt/p2 /usr/sbin/sshd -T
+  register: sshd_effective
+  changed_when: false
+  tags: [ssh_ca]
+
+- name: "ssh_ca_install: assert certificate auth AND break-glass are both configured"
+  ansible.builtin.assert:
+    that:
+      - "'trustedusercakeys /etc/ssh/ssh-user-ca.pub' in sshd_effective.stdout"
+      - "'hostcertificate /etc/ssh/ssh_host_ecdsa_key-cert.pub' in sshd_effective.stdout"
+      - "'authorizedkeysfile .ssh/authorized_keys' in sshd_effective.stdout"
+    fail_msg: "the installed rootfs's sshd would not serve the SSH-CA enrollment"
+    success_msg: "installed gateway boots with its host certificate, trusts the domain's User CA and keeps break-glass keys"
+  tags: [ssh_ca]

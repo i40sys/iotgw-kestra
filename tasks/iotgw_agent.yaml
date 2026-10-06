@@ -128,4 +128,17 @@
     - /usr/share/luci/menu.d/luci-app-iotgw.json
     - /www/luci-static/resources/view/iotgw/
     - /etc/inittab
+    # SSH-CA (iotgw-ng task-153): OpenWRT's keep.d/openssh-server keeps
+    # sshd_config.d/ (the 50-/60- drop-ins) and the rsa/ed25519 keys, but not
+    # the files the drop-ins point at — after a sysupgrade sshd would lose its
+    # host certificate, and a missing RevokedKeys file makes it reject every
+    # key login (break-glass included).
+    - /etc/ssh/ssh_host_ecdsa_key
+    - /etc/ssh/ssh_host_ecdsa_key.pub
+    - /etc/ssh/ssh_host_ecdsa_key-cert.pub
+    - /etc/ssh/ssh-user-ca.pub
+    - /etc/ssh/ssh-host-ca.pub
+    - /etc/ssh/ssh_known_hosts
+    - /etc/ssh/auth_principals/
+    - /etc/ssh/revoked_keys
   tags: [iotgw]

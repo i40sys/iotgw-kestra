@@ -16,8 +16,10 @@
 #     the iotgw-ui backend for the current code (POST /internal/devices/
 #     enroll-code, bearer OPS_CERT_MINT_TOKEN — the runner's existing backend
 #     credential) and hands it to `iotgw ssh refresh -otp` for this one call.
-#     A device the server already has enrolled (e.g. reinstalled) is refused
-#     (409): use "Reset SSH enrollment" in the UI first.
+#     A device the server already has enrolled is refused (409). A reinstall
+#     through the install flow enrolls the new OS itself and resets the old
+#     record (tasks/ssh_ca_install.yaml, iotgw-ng task-153); for any other
+#     reinstall use "Reset SSH enrollment" in the UI first.
 #
 # No TOTP is derived anywhere any more (decision-009 is superseded).
 #
