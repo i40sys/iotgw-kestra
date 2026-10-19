@@ -60,9 +60,6 @@
     - import_tasks: tasks/nodered.yaml
       tags: nodered
 
-    - import_tasks: tasks/bugfixing.yaml
-      tags: bugfixing
-
     - import_tasks: tasks/netxms-agent.yaml
       tags: netxms
 
