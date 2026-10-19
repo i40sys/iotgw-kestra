@@ -12,7 +12,6 @@ function index()
     entry({"admin", "apps", "duplicati"}, call("serve_js_redirect", "http", "8200"), _("Duplicati"), 40).leaf = true
     entry({"admin", "apps", "vscode"}, call("serve_js_redirect", "http", "8443"), _("VS Code"), 50).leaf = true
     entry({"admin", "apps", "alloy"}, call("serve_js_redirect", "http", "12345 "), _("Alloy"), 60).leaf = true
-    entry({"admin", "apps", "glpi-agent"}, call("serve_js_redirect", "http", "62354 "), _("GLPI Agent"), 70).leaf = true
     entry({"admin", "apps", "ttyd"}, call("serve_js_redirect", "http", "7681 "), _("Web Terminal"), 70).leaf = true
 end
 

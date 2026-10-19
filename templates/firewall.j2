@@ -92,15 +92,6 @@ config rule
   option ipset 'ManagementIPs'
 
 config rule
-  option name 'GLPI agent allowed'
-  list proto 'tcp'
-  option src '*'
-  option dest_port '62354'
-  option target 'ACCEPT'
-  option family 'ipv4'
-  option ipset 'ManagementIPs'
-
-config rule
   option name 'ttyd, web terminal'
   list proto 'tcp'
   option src '*'

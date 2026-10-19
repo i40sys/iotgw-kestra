@@ -48,9 +48,6 @@
     - import_tasks: tasks/mosquitto.yaml
       tags: mosquitto
 
-    - import_tasks: tasks/glpi-agent.yaml
-      tags: glpi-agent
-
     - import_tasks: tasks/telegraf.yaml
       tags: telegraf
 
@@ -65,9 +62,6 @@
 
     - import_tasks: tasks/lldpd.yaml
       tags: lldpd
-
-    - import_tasks: tasks/plc_sniffer.yaml
-      tags: plc_sniffer
 
     - name: Everything done.
       ansible.builtin.debug:
