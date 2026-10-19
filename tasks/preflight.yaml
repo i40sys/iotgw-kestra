@@ -32,7 +32,7 @@
     iotgw_known_tags:
       [all, always, tagged, untagged, system, ntp, ssh_ca, firewall, syslog, shell,
        credentials, dockge, vscode, observability, mosquitto, glpi-agent, telegraf,
-       duplicati, nodered, bugfixing, netxms, lldpd, plc_sniffer]
+       duplicati, nodered, netxms, lldpd, plc_sniffer]
     iotgw_stack_contract:
       - tag: system
         flag: ~

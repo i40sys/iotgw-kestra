@@ -16,7 +16,8 @@ config device
 	list ports 'eth4'
 	list ports 'eth5'
 	option ipv6 '0'
-  option stp '0'
+	{# STP off on the LAN bridge (formerly the separate `bugfixing` tag) #}
+	option stp '0'
 
 config interface 'lan'
 	option device 'br-lan'
