@@ -86,12 +86,10 @@ The main workflow that orchestrates the complete IoT Gateway provisioning:
 | `mosquitto.yaml` | MQTT broker |
 | `telegraf.yaml` | Metrics collection agent |
 | `observability.yaml` | Monitoring and logging stack |
-| `glpi-agent.yaml` | GLPI inventory agent |
 | `duplicati.yaml` | Backup solution |
 | `netxms-agent.yaml` | Network monitoring agent |
 | `lldpd.yaml` | Link Layer Discovery Protocol |
 | `uptime-kuma.yaml` | Uptime monitoring |
-| `plc_sniffer.yaml` | PLC communication sniffer |
 
 ## Deployed Services
 

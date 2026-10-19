@@ -14,7 +14,7 @@
 # A stack RUNS when BOTH hold:
 #   * its tag is selected — json_data.__tags__ becomes `--tags`; no tags = all;
 #   * its enable flag in the JSON is not false — firewall, credentials, obs,
-#     mqtt, glpi-agent, duplicati, telegraf, nodered, netxms (absent = enabled).
+#     mqtt, duplicati, telegraf, nodered, netxms (absent = enabled).
 # The play gates each import on `iotgw_stack_enabled[<tag>]`.
 #
 # A required value is MISSING when it is undefined, null, empty, or the
@@ -24,15 +24,13 @@
   ansible.builtin.set_fact:
     # `secundary_ntp` (sic) is the historical name; `secondary_ntp` is accepted too.
     secundary_ntp: "{{ secundary_ntp | default(secondary_ntp | default('')) }}"
-    # The JSON key is hyphenated (`glpi-agent`, like the tag); `glpi_agent` too.
-    iotgw_flag_glpi_agent: "{{ lookup('ansible.builtin.vars', 'glpi-agent', default=(glpi_agent | default(true))) }}"
 
 - name: "preflight: stack contract (tag -> enable flag -> required variables)"
   ansible.builtin.set_fact:
     iotgw_known_tags:
       [all, always, tagged, untagged, system, ntp, ssh_ca, firewall, syslog, shell,
-       credentials, dockge, vscode, observability, mosquitto, glpi-agent, telegraf,
-       duplicati, nodered, netxms, lldpd, plc_sniffer]
+       credentials, dockge, vscode, observability, mosquitto, telegraf,
+       duplicati, nodered, netxms, lldpd]
     iotgw_stack_contract:
       - tag: system
         flag: ~
@@ -61,9 +59,6 @@
         required: [iotgw_hostname, local_ip_address, iiot_host, iiot_mqtt_user,
                    iiot_mqtt_password, mqtt_bridge_topics, emqx_api_url,
                    emqx_api_key, emqx_api_secret]
-      - tag: glpi-agent
-        flag: iotgw_flag_glpi_agent
-        required: [glpi_server, glpi_user, glpi_password, ghcr_pat]
       - tag: telegraf
         flag: telegraf
         required: [telegraf_config_url, influx_token]
@@ -77,9 +72,6 @@
         flag: netxms
         required: [netxms_server_port, netxms_web_port, netxms_server_ip,
                    netxms_master_servers, netxms_debug_level, proxy_agent, proxy_snmp]
-      - tag: plc_sniffer
-        flag: ~
-        required: [local_ip_address]
 
 - name: "preflight: reject unknown tags in json_data.__tags__"
   ansible.builtin.assert:
@@ -111,7 +103,7 @@
       Stack '{{ item.tag }}' is enabled but the deployment configuration lacks
       (or leaves empty / CHANGE_ME): {{ _missing | join(', ') }}.
       Fill them in the UI Provisioning step, or disable the stack
-      {%- if item.flag %} (set `{{ 'glpi-agent' if item.flag == 'iotgw_flag_glpi_agent' else item.flag }}: false`){% endif %}.
+      {%- if item.flag %} (set `{{ item.flag }}: false`){% endif %}.
     success_msg: "stack '{{ item.tag }}': all required variables present"
     quiet: true
   vars:
