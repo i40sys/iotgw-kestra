@@ -79,7 +79,6 @@ The main workflow that orchestrates the complete IoT Gateway provisioning:
 | `firewall.yaml` | OpenWRT firewall zones and rules |
 | `syslog.yaml` | Remote syslog configuration |
 | `shell.yaml` | Shell environment setup |
-| `credentials.yaml` | SSH keys and authentication |
 | `dockge.yaml` | Docker stack manager |
 | `vscode.yaml` | VS Code Server deployment |
 | `nodered.yaml` | Node-RED flow editor |
