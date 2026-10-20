@@ -13,7 +13,7 @@
 #
 # A stack RUNS when BOTH hold:
 #   * its tag is selected — json_data.__tags__ becomes `--tags`; no tags = all;
-#   * its enable flag in the JSON is not false — firewall, credentials, obs,
+#   * its enable flag in the JSON is not false — firewall, obs,
 #     mqtt, duplicati, telegraf, nodered, netxms (absent = enabled).
 # The play gates each import on `iotgw_stack_enabled[<tag>]`.
 #
@@ -29,7 +29,7 @@
   ansible.builtin.set_fact:
     iotgw_known_tags:
       [all, always, tagged, untagged, system, ntp, ssh_ca, firewall, syslog, shell,
-       credentials, dockge, vscode, observability, mosquitto, telegraf,
+       dockge, vscode, observability, mosquitto, telegraf,
        duplicati, nodered, netxms, lldpd]
     iotgw_stack_contract:
       - tag: system
@@ -41,9 +41,6 @@
       - tag: firewall
         flag: firewall
         required: [local_ip_address]
-      - tag: credentials
-        flag: credentials
-        required: [ghcr_pat, notion_api_key]
       - tag: vscode       # code-server PASSWORD = root_password
         flag: ~
         required: [root_password]

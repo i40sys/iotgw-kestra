@@ -45,10 +45,6 @@
     - import_tasks: tasks/shell.yaml
       tags: shell
 
-    - import_tasks: tasks/credentials.yaml
-      tags: credentials
-      when: iotgw_stack_enabled['credentials']
-
     - import_tasks: tasks/dockge.yaml
       tags: dockge
 
