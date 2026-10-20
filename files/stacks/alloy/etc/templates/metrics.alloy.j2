@@ -64,20 +64,23 @@ prometheus.scrape "containers_exporter" {
   scrape_interval = "50s"
 }
 
+{# Only when the uptime-kuma stack is on: Kuma's /metrics takes its admin login
+   (no API keys are created, so basic auth uses the user account). #}
+{% if uptime_kuma | default(true) | bool and autokuma_username is defined and autokuma_password is defined %}
 // uptime-kuma metrics
 prometheus.scrape "kuma_exporter" {
   targets    = [
-    { "__address__" = "127.0.0.1:3003",
+    { "__address__" = "127.0.0.1:{{ uptime_kuma_port | default('3003') }}",
       "__scheme__" = "http",
-      "__username__" = "/metrics",
+      "__metrics_path__" = "/metrics",
       "instance" = constants.hostname,
       "job" = "kuma_exporter",
       "__scrape_interval__" = "50s",
      },
   ]
   basic_auth {
-    username = "{{ kuma_exporter_username }}"
-    password = "{{ kuma_exporter_password }}"
+    username = {{ autokuma_username | to_json }}
+    password = {{ autokuma_password | to_json }}
   }
   forward_to = [prometheus.remote_write.mimir_writer.receiver]
 
@@ -85,3 +88,4 @@ prometheus.scrape "kuma_exporter" {
   scrape_timeout =  "30s"
   scrape_interval = "50s"
 }
+{% endif %}

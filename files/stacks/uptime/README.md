@@ -1,33 +1,32 @@
 # Uptime Kuma Docker Stack
 
-Active local monitoring with Autokuma and Uptime Kuma. In the contrib/ folder is `kuma-cli` to interact with the Kuma API.
+Local monitoring of the gateway with Uptime Kuma and AutoKuma; Grafana Alloy
+scrapes Kuma's Prometheus `/metrics`. Deployed by `tasks/uptime-kuma.yaml`
+(provisioning tag `uptime-kuma`, deployment flag `uptime_kuma`).
 
-Very easy to use and simple to for monitoring local services and exposing prometheus metrics.
+## How it is bootstrapped
 
-## Remarkable notes
+There is no prepared database. Every provisioning run recreates the stack:
 
-`data_clean.tar.gz` is a clean SQL lite DB with some stuff preconfigured.
-  - dark theme enabled
-  - u/p admin/Fence3-Dusk9
-  - API Key: `uk1_<REDACTED-set-via-env>`
-  - Docker Host: `unix_socket`
+1. `kuma` starts with an empty database.
+2. `contrib/bootstrap-admin.js` (run inside the kuma container, which ships
+   `socket.io-client`) creates the admin user from `autokuma_username` /
+   `autokuma_password`, or only checks the login if the admin already exists.
+3. `autokuma` starts and creates, from the labels in `compose.yml` and the
+   snippets in `.env`, the local Docker socket and the monitors.
 
-## Use env.j2 to generate the .env file
+The same account is used by AutoKuma and by Alloy's basic auth on `/metrics`.
+Don't create API keys in the UI: once one exists, Kuma's `/metrics` stops
+accepting the user's login and the Alloy scrape fails.
 
-Ready for being used by Ansible to deploy the stack.
-The only required variable is `num_maquina` which is used to generate the local IP address. By `default` it will be `0`.
+## Monitors
 
-## Uptime Kuma API Key
+Only the gateway's own services:
 
-```
-API_KEY="uk1_<REDACTED-set-via-env>"
-```
-
-## Grafana Alloy connectoin to the /metrics endpoint using basic auth (API_KEY)
-
-```yaml
-
-```
+- `docker_containers`: every container labelled `kuma.__container`.
+- `local_services`: the gateway's DNS resolving `<iotgw_hostname>.<local_domain>`,
+  the MQTT broker port (when the `mqtt` flag is on) and Alloy's HTTP port (when
+  the `obs` flag is on).
 
 ## Documentation
 

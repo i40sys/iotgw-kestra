@@ -37,7 +37,7 @@
       tags: observability
 
     - import_tasks: tasks/uptime-kuma.yaml
-      tags: observability
+      tags: uptime-kuma
 
     - import_tasks: tasks/observability.yaml
       tags: observability
