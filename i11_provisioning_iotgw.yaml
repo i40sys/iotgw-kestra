@@ -56,8 +56,8 @@
       when: iotgw_stack_enabled['observability']
 
     - import_tasks: tasks/uptime-kuma.yaml
-      tags: observability
-      when: iotgw_stack_enabled['observability']
+      tags: uptime-kuma
+      when: iotgw_stack_enabled['uptime-kuma']
 
     - import_tasks: tasks/observability.yaml
       tags: observability

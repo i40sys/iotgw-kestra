@@ -14,7 +14,7 @@
 # A stack RUNS when BOTH hold:
 #   * its tag is selected — json_data.__tags__ becomes `--tags`; no tags = all;
 #   * its enable flag in the JSON is not false — firewall, obs,
-#     mqtt, duplicati, telegraf, nodered, netxms (absent = enabled).
+#     uptime_kuma, mqtt, duplicati, telegraf, nodered, netxms (absent = enabled).
 # The play gates each import on `iotgw_stack_enabled[<tag>]`.
 #
 # A required value is MISSING when it is undefined, null, empty, or the
@@ -29,7 +29,7 @@
   ansible.builtin.set_fact:
     iotgw_known_tags:
       [all, always, tagged, untagged, system, ntp, ssh_ca, firewall, syslog, shell,
-       dockge, vscode, observability, mosquitto, telegraf,
+       dockge, vscode, observability, uptime-kuma, mosquitto, telegraf,
        duplicati, nodered, netxms, lldpd]
     iotgw_stack_contract:
       - tag: system
@@ -49,8 +49,11 @@
         required: [alloy_log_level, prometheus_url, prometheus_oauth2_token_url,
                    prometheus_oauth2_client_id, prometheus_oauth2_client_secret,
                    loki_url, loki_oauth2_token_url, loki_oauth2_client_id,
-                   loki_oauth2_client_secret, kuma_exporter_username,
-                   kuma_exporter_password, containers_exporter_port]
+                   loki_oauth2_client_secret, containers_exporter_port]
+      - tag: uptime-kuma  # monitors the gateway's own services only
+        flag: uptime_kuma
+        required: [autokuma_username, autokuma_password, iotgw_hostname,
+                   local_domain, local_ip_address]
       - tag: mosquitto
         flag: mqtt
         required: [iotgw_hostname, local_ip_address, iiot_host, iiot_mqtt_user,
@@ -126,10 +129,13 @@
       - main_local_dns is not defined or main_local_dns is match('^(\d{1,3}\.){3}\d{1,3}$')
       # task-131: optional; dotted contiguous mask or prefix 8-30 (same pattern as the schema).
       - local_netmask is not defined or local_netmask is none or (local_netmask | string | trim) == '' or (local_netmask | string | trim) is match('^(255\.((0|128|192|224|240|248|252|254)\.0\.0|255\.(0|128|192|224|240|248|252|254)\.0|255\.255\.(0|128|192|224|240|248|252))|/?([89]|[12][0-9]|30))$')
-      - backup_local_dns is not defined or not backup_local_dns or backup_local_dns is match('^(\d{1,3}\.){3}\d{1,3}$')
       - iotgw_hostname is not defined or iotgw_hostname is match('^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$')
-      - num_maquina is not defined or (num_maquina | string) is match('^\d+$')
       - containers_exporter_port is not defined or (containers_exporter_port | string) is match('^\d+$')
+      # uptime-kuma: Kuma's setup rejects weaker passwords; the .env quotes both values with ''.
+      - autokuma_password is not defined or ((autokuma_password | string | length) >= 6 and autokuma_password is search('[A-Za-z]') and autokuma_password is search('[0-9]'))
+      - autokuma_password is not defined or autokuma_password is not search("['\n]")
+      - autokuma_username is not defined or autokuma_username is not search("['\n]")
+      - uptime_kuma_port is not defined or (uptime_kuma_port | string) is match('^\d+$')
       - proxy_agent is not defined or (proxy_agent | string) in ['yes', 'no']
       - proxy_snmp is not defined or (proxy_snmp | string) in ['yes', 'no']
       - dhcp_hosts is not defined or dhcp_hosts is none or (dhcp_hosts | rejectattr('name', 'defined') | list + dhcp_hosts | rejectattr('ip', 'defined') | list + dhcp_hosts | rejectattr('mac', 'defined') | list) | length == 0

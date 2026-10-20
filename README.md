@@ -84,11 +84,11 @@ The main workflow that orchestrates the complete IoT Gateway provisioning:
 | `nodered.yaml` | Node-RED flow editor |
 | `mosquitto.yaml` | MQTT broker |
 | `telegraf.yaml` | Metrics collection agent |
-| `observability.yaml` | Monitoring and logging stack |
+| `observability.yaml` | Grafana Alloy: metrics and logs (tag `observability`) |
 | `duplicati.yaml` | Backup solution |
 | `netxms-agent.yaml` | Network monitoring agent |
 | `lldpd.yaml` | Link Layer Discovery Protocol |
-| `uptime-kuma.yaml` | Uptime monitoring |
+| `uptime-kuma.yaml` | Uptime Kuma + AutoKuma: monitors of the gateway's own services (tag `uptime-kuma`) |
 
 ## Deployed Services
 
