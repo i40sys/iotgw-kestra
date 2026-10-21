@@ -25,6 +25,22 @@ The **Node-RED Docker Stack** provides a containerized instance of Node-RED, an 
 7. [Security Considerations](#security-considerations)
 8. [Conclusion](#conclusion)
 
+## Standalone or with a flows repo (iotgw-ng v0.7.1)
+
+- **Standalone (default):** `nodered: true` needs only `nodered_user` and
+  `nodered_password`. Node-RED starts with an empty local workspace
+  (`data/flows.json`), behind the admin login.
+- **Flows repo (optional):** `nodered_flows_repo: true` also needs
+  `github_org`, turns on projects mode and clones
+  `flows.<iotgw_hostname>`. This path still needs
+  `data/.config.projects.json.j2` and Git access, which this public repo does
+  not ship; preflight says so.
+- `data/settings.js` is vendored: it builds `adminAuth` from
+  `NODE_RED_USER` / `NODE_RED_PASSWORD` (.env). Before it, the image wrote its
+  stock settings, whose `adminAuth` is commented out, so the editor had no login.
+- Re-provisioning replaces the stack files but keeps `data/`, so local flows
+  survive.
+
 ## Overview
 
 This stack is designed to deploy and configure **Node-RED** within a Docker container, focusing on integrating with IoT devices and services. Each IoT Gateway (`iot-gw`) has its own dedicated GitHub repository for Node-RED flows, enabling version control and easy management of flow configurations. The stack uses **Docker Compose** for container orchestration and **Ansible** for automated provisioning and management.
