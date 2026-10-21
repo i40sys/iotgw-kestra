@@ -1,3 +1,9 @@
+# The EMQX bridge is optional (`mqtt_bridge`); preflight resolves it, but the
+# install playbook has no preflight, so resolve it here too.
+- name: "mosquitto: resolve the optional EMQX bridge"
+  ansible.builtin.set_fact:
+    iotgw_mqtt_bridge: "{{ iotgw_mqtt_bridge | default(mqtt_bridge | default(iiot_host is defined and iiot_host is not none and (iiot_host | string | trim) != '') | bool) | bool }}"
+
 - name: "mosquitto: Check if Docker stack is running"
   community.docker.docker_compose_v2:
     project_src: /opt/stacks/mosquitto
@@ -118,7 +124,8 @@
   when: users is defined and users is not none and users | length > 0
   no_log: true  # item.password is on the command line
 
-# Task to check if user {{ iiot_mqtt_user }} exists in EMQX authentication database.
+# Task to check if user {{ iiot_mqtt_user }} exists in EMQX authentication database
+# (bridge only: without `mqtt_bridge` nothing talks to EMQX).
 # task-130: look the user up by id (200 / 404) instead of scanning the first
 # page of 20 users — past 20 users an existing user was "missing", the POST
 # then 409'd and the stack failed.
@@ -132,6 +139,7 @@
     return_content: yes
     status_code: [200, 404]
   register: emqx_user
+  when: iotgw_mqtt_bridge
   no_log: true
 
 # - ansible.builtin.debug:
@@ -151,7 +159,7 @@
       password: "{{ iiot_mqtt_password }}"
       is_superuser: true
     status_code: 201
-  when: emqx_user.status == 404
+  when: iotgw_mqtt_bridge and emqx_user.status == 404
   no_log: true
 
 # Task to update the password if the user already exists
@@ -167,7 +175,7 @@
       password: "{{ iiot_mqtt_password }}"
       is_superuser: true
     status_code: 200
-  when: emqx_user.status == 200
+  when: iotgw_mqtt_bridge and emqx_user.status == 200
   no_log: true
 
 - name: "mosquitto: Start Docker stack"

@@ -5,6 +5,9 @@
 # stack failed on every run. Taken from this stack's README, with the
 # client-specific bridge topics lifted into `mqtt_bridge_topics`.
 {# SECRET: iiot_mqtt_password — the rendering task is no_log. #}
+{# The bridge is optional (iotgw_mqtt_bridge, from `mqtt_bridge`): without it
+   mosquitto runs standalone and the iiot_* / mqtt_bridge_topics vars are unused. #}
+{% if iotgw_mqtt_bridge | bool %}
 
 # Bridge to the IIoT broker (EMQX)
 connection emqx1
@@ -16,6 +19,7 @@ remote_password {{ iiot_mqtt_password }}
 {% for t in mqtt_bridge_topics %}
 topic {{ t }}
 {% endfor %}
+{% endif %}
 
 # Listener (LAN address of the gateway)
 listener 1883 {{ local_ip_address }}
