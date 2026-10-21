@@ -51,11 +51,16 @@ mkdir -p /opt/stacks/alloy/lib
 
 ### 4. Install glibc Libraries
 
-The `glibc.tar.gz` file, required for the Alloy binary, is extracted:
+OpenWrt uses musl; the Alloy binary needs glibc. `contrib/glibc/` holds only the
+four files it links against, from a pinned Debian `libc6` (see
+`contrib/glibc/PROVENANCE.md`). They are copied into the stack:
 
 ```bash
-tar -xzf /opt/stacks/alloy/contrib/glibc.tar.gz -C /opt/stacks/alloy/lib/
+cp -a /opt/stacks/alloy/contrib/glibc/. /opt/stacks/alloy/lib/x86_64-linux-gnu/
 ```
+
+If the image has no `/lib64`, it is linked to `/lib` (the binary's loader is
+`/lib64/ld-linux-x86-64.so.2`).
 
 ### 5. Link glibc Libraries with the OS
 
