@@ -1,0 +1,31 @@
+---
+# Harness test: duplicati (backup UI + the two imported backup jobs).
+- name: duplicati stack on an OpenWrt container
+  hosts: openwrt
+  remote_user: root
+  gather_facts: false
+  vars:
+    duplicati: true
+    duplicati_access_password: harness-pass
+    duplicati_docker_target_url: file:///backup/docker
+    duplicati_system_target_url: file:///backup/system
+  roles:
+    - gekmihesg.openwrt
+  tasks:
+    - ansible.builtin.import_tasks: tests/harness/prep_docker.yaml
+    - ansible.builtin.import_tasks: tasks/duplicati.yaml
+    - ansible.builtin.import_tasks: tasks/duplicati.yaml
+
+    - name: "check: both backup jobs were rendered as JSON"
+      ansible.builtin.raw: >-
+        for f in Docker-duplicati-config.json System-duplicati-config.json; do
+        python3 -c "import json,sys; json.load(open(sys.argv[1]))" /opt/stacks/duplicati/import/$f || exit 1; done
+      changed_when: false
+
+    - name: "check: the duplicati web UI answers on :8200"
+      ansible.builtin.raw: curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8200/
+      register: web
+      retries: 30
+      delay: 3
+      until: web.stdout in ["200", "302", "401"]
+      changed_when: false

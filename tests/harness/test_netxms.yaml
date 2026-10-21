@@ -1,0 +1,29 @@
+---
+# Harness test: the NetXMS agent (no server: the agent must still start).
+- name: netxms stack on an OpenWrt container
+  hosts: openwrt
+  remote_user: root
+  gather_facts: false
+  vars:
+    netxms: true
+    netxms_server_port: 4701
+    netxms_web_port: 4703
+    netxms_server_ip: 127.0.0.1
+    netxms_master_servers: 127.0.0.1
+    netxms_debug_level: 1
+    proxy_agent: "yes"
+    proxy_snmp: "yes"
+  roles:
+    - gekmihesg.openwrt
+  tasks:
+    - ansible.builtin.import_tasks: tests/harness/prep_docker.yaml
+    - ansible.builtin.import_tasks: tasks/netxms-agent.yaml
+    - ansible.builtin.import_tasks: tasks/netxms-agent.yaml
+
+    - name: "check: nxagentd is running in the netxms-agent container"
+      ansible.builtin.raw: docker exec netxms-agent pgrep nxagentd
+      register: nx
+      retries: 20
+      delay: 3
+      until: nx.rc == 0
+      changed_when: false

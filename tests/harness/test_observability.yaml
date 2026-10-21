@@ -1,0 +1,80 @@
+---
+# Harness test: the observability stack (Grafana Alloy) on OpenWrt.
+#   tests/harness/run.sh tests/harness/test_observability.yaml
+#
+# Runs tasks/observability.yaml unchanged, then checks each thing it must leave
+# behind, one assertion per step, so a failure names the broken step.
+- name: observability stack on an OpenWrt container
+  hosts: openwrt
+  remote_user: root
+  gather_facts: false
+  vars:
+    # Dummy endpoints: Alloy must start (and report ready) even when they are
+    # unreachable — the gateway boots before its uplink in the field too.
+    alloy_log_level: info
+    prometheus_url: http://127.0.0.1:9/api/v1/push
+    prometheus_oauth2_token_url: http://127.0.0.1:9/token
+    prometheus_oauth2_client_id: harness
+    prometheus_oauth2_client_secret: harness-secret
+    loki_url: http://127.0.0.1:9/loki/api/v1/push
+    loki_oauth2_token_url: http://127.0.0.1:9/token
+    loki_oauth2_client_id: harness
+    loki_oauth2_client_secret: harness-secret
+    uptime_kuma: false
+
+  roles:
+    - gekmihesg.openwrt
+
+  pre_tasks:
+    # What the `system` stack installs before this one (files/lists/packages.lst)
+    # that observability relies on: unzip for the Alloy release archive.
+    - name: "harness: packages the system stack provides"
+      ansible.builtin.raw: opkg update >/dev/null && opkg install unzip >/dev/null
+      changed_when: false
+
+  tasks:
+    # Path from the repo root: run.sh runs every test from there.
+    - ansible.builtin.import_tasks: tasks/observability.yaml
+
+    # Gateways are re-provisioned: run the stack again over the first install
+    # (alloy running, /lib links in place) — it must converge, not trip on them.
+    - name: "harness: second provisioning of the same gateway"
+      ansible.builtin.debug:
+        msg: re-provisioning
+    - ansible.builtin.import_tasks: tasks/observability.yaml
+
+    # ---- step-by-step checks ---------------------------------------------------
+    - name: "check: glibc files are in the stack's lib dir"
+      ansible.builtin.raw: >-
+        for f in libc.so.6 libpthread.so.0 libdl.so.2 ld-linux-x86-64.so.2 libgcc_s.so.1; do
+        test -f /opt/stacks/alloy/lib/x86_64-linux-gnu/$f || { echo "missing $f"; exit 1; }; done
+      changed_when: false
+
+    - name: "check: the ELF interpreter path resolves"
+      ansible.builtin.raw: test -e /lib64/ld-linux-x86-64.so.2 && test -e /lib/x86_64-linux-gnu/libc.so.6
+      changed_when: false
+
+    - name: "check: the alloy binary runs"
+      ansible.builtin.raw: /opt/stacks/alloy/bin/alloy --version
+      register: alloy_version_out
+      changed_when: false
+
+    - name: "check: alloy is v1.5.1"
+      ansible.builtin.assert:
+        that: "'v1.5.1' in alloy_version_out.stdout"
+
+    - name: "check: the rendered configs are there"
+      ansible.builtin.raw: test -s /opt/stacks/alloy/etc/base.alloy && test -s /opt/stacks/alloy/etc/writers.alloy && test -s /opt/stacks/alloy/etc/metrics.alloy
+      changed_when: false
+
+    - name: "check: the service is enabled at boot"
+      ansible.builtin.raw: ls /etc/rc.d/ | grep -q '^S99alloy$'
+      changed_when: false
+
+    - name: "check: alloy is up and ready on :12345"
+      ansible.builtin.raw: wget -qO- http://127.0.0.1:12345/-/ready
+      register: ready
+      retries: 20
+      delay: 3
+      until: ready.rc == 0
+      changed_when: false

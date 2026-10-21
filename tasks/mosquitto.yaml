@@ -27,13 +27,18 @@
     src: stacks/mosquitto/
     dest: /opt/stacks/mosquitto/
     mode: preserve
-- name: "mosquitto: Installing usermod for changing root password"
+# groupadd/useradd: the group and user tasks below need them, and the system
+# stack (files/lists/packages.lst) only installs usermod/groupmod — the OpenWrt
+# harness (tests/harness/test_mosquitto.yaml) failed here on a clean gateway.
+- name: "mosquitto: Installing the shadow tools for the mosquitto user/group"
   community.general.opkg:
     name: "{{ item }}"
     state: present
   loop:
   - shadow-usermod
   - shadow-groupmod
+  - shadow-groupadd
+  - shadow-useradd
 
 
 - name: "mosquitto: Create mosquitto group with GID 1883"

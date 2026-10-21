@@ -1,0 +1,15 @@
+---
+# Harness test: lldpd (opkg + UCI + procd service, no docker).
+- name: lldpd stack on an OpenWrt container
+  hosts: openwrt
+  remote_user: root
+  gather_facts: false
+  vars:
+    iotgw_hostname: gw-harness
+  roles:
+    - gekmihesg.openwrt
+  tasks:
+    - ansible.builtin.import_tasks: tasks/lldpd.yaml
+    - name: "check: lldpd is running"
+      ansible.builtin.raw: pgrep lldpd
+      changed_when: false

@@ -1,0 +1,45 @@
+# OpenWrt stack harness
+
+Runs provisioning task files the way the Kestra `provisioning` flow does, against
+a throw-away **OpenWrt 23.05.4 container**, never a real gateway:
+
+- the pinned runner image (`cytopia/ansible:2.18-tools@sha256:…`), the same
+  collections and the `gekmihesg.openwrt` role at the same commit as `Flow.yaml`;
+- SSH as root to an `openwrt/rootfs` booted with procd, prepared like the install
+  flow prepares a gateway (`files/enable_ansible.sh`: OpenSSH + sftp-server +
+  python3, dropbear off).
+
+On OpenWrt hosts the role replaces Ansible modules (`copy`, `file`, `stat`, …)
+with BusyBox shell versions. A test with plain Ansible against Alpine passed
+while production failed (`Remote copy does not support recursive copy of
+directory`); this harness reproduces that, and is what found the next two bugs
+(alloy's libgcc_s crash loop, mosquitto's missing `groupadd`).
+
+```bash
+tests/harness/run.sh tests/harness/test_observability.yaml   # one stack
+tests/harness/run.sh all                                     # every test_*.yaml
+HARNESS_KEEP=1 tests/harness/run.sh tests/harness/test_nodered.yaml   # keep the target to debug
+```
+
+Needs Docker (privileged containers) and internet (opkg, image pulls). The target
+image is built once and cached (`iotgw-harness-target:<hash>`). CI:
+`.github/workflows/harness.yml` runs every test on each push to `main`.
+
+| Test | Stack | Checks (after provisioning **twice**) |
+|---|---|---|
+| `test_observability.yaml` | Alloy | glibc files, ELF loader path, binary runs, configs rendered, enabled at boot, `:12345/-/ready` |
+| `test_mosquitto.yaml` | mosquitto (no bridge) | no bridge block, container up, local user pub/sub, anonymous refused |
+| `test_nodered.yaml` | Node-RED (no flows repo) | editor up, API 401 without login, login works, projects off, local flows kept |
+| `test_telegraf.yaml` | telegraf | `.env`, container stays up (config served by the target) |
+| `test_duplicati.yaml` | duplicati | both backup jobs valid JSON, web UI on `:8200` |
+| `test_netxms.yaml` | NetXMS agent | `nxagentd` running |
+| `test_lldpd.yaml` | lldpd | daemon running |
+
+Docker stacks first run `prep_docker.yaml`: the packages they use from
+`files/lists/packages.lst` and the real `tasks/system_docker.yaml`, then a
+dockerd restart (on a gateway the system stack's dockerd config only applies at
+the next boot).
+
+Not covered: `system` (rewrites `/etc/config/network`, needs a live wg0),
+`ssh_ca` (needs the backend + pki-manager), the EMQX bridge and the Node-RED
+flows repo (need external services).
