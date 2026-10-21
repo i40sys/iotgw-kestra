@@ -9,6 +9,7 @@
     owner: root
     group: root
     mode: '0644'
+  register: dockerd_uci
 
 - name: "system, dockerd: creating directory for daemon.json"
   ansible.builtin.file:
@@ -25,6 +26,26 @@
     owner: root
     group: root
     mode: '0644'
+  register: dockerd_daemon_json
+
+# Apply the config now, not at the next boot: the stacks provisioned after
+# `system` must run on this dockerd (data-root /opt/docker, overlay2, bip).
+# Only when it changed — a restart stops every running container (they come
+# back by their restart policy). Containers wait for the new daemon below.
+- name: "system, dockerd: restart to apply the new configuration"
+  community.general.openwrt_init:
+    name: dockerd
+    state: restarted
+  when: dockerd_uci is changed or dockerd_daemon_json is changed
+
+- name: "system, dockerd: wait until the daemon answers"
+  ansible.builtin.shell: |
+    for i in $(seq 1 120); do docker info >/dev/null 2>&1 && exit 0; sleep 1; done
+    echo "dockerd did not come up after the restart" >&2
+    logread | grep -i docker | tail -20 >&2
+    exit 1
+  changed_when: false
+  when: dockerd_uci is changed or dockerd_daemon_json is changed
 
 - name: "system, docker compose: copying script for downloading and installing plugin"
   ansible.builtin.copy:
