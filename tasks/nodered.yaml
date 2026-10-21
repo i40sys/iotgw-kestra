@@ -1,3 +1,9 @@
+# The flows repo is optional (`nodered_flows_repo`); preflight resolves it, but
+# the install playbook has no preflight, so resolve it here too.
+- name: "nodered: resolve the optional flows repo"
+  ansible.builtin.set_fact:
+    iotgw_nodered_flows_repo: "{{ iotgw_nodered_flows_repo | default(nodered_flows_repo | default(false) | bool) | bool }}"
+
 - name: "nodered: Check if Docker stack is running"
   community.docker.docker_compose_v2:
     project_src: /opt/stacks/nodered
@@ -11,10 +17,23 @@
     state: absent
   when: stack_status is not failed
 
-- name: "nodered: Remove directory /opt/stacks/nodered"
+# Keep data/: without a flows repo the flows live only in data/flows.json, so
+# wiping the whole directory (as before) would lose them on every run.
+- name: "nodered: Find the previous stack files (all but data/)"
+  ansible.builtin.find:
+    paths: /opt/stacks/nodered
+    file_type: any
+    hidden: true
+    excludes: [data]
+  register: nodered_old_files
+
+- name: "nodered: Remove the previous stack files"
   ansible.builtin.file:
-    path: /opt/stacks/nodered
+    path: "{{ item.path }}"
     state: absent
+  loop: "{{ nodered_old_files.files }}"
+  loop_control:
+    label: "{{ item.path }}"
 
 - name: 'nodered: deploy stack files (task-073 §7: vendored in files/stacks/, no git clone)'
   ansible.builtin.copy:
@@ -68,13 +87,16 @@
     mode: '0640'
   no_log: true  # admin password hash
 
+# ---- optional flows repo (nodered_flows_repo) ---------------------------------
 - name: "nodered: Fetch .config.projects.json.j2"
+  when: iotgw_nodered_flows_repo
   ansible.builtin.fetch:
     src: /opt/stacks/nodered/data/.config.projects.json.j2
     dest: /tmp/.config.projects.json.j2
     flat: yes
 
 - name: "nodered: Update the .config.projects.json with new hostname"
+  when: iotgw_nodered_flows_repo
   ansible.builtin.template:
     src: /tmp/.config.projects.json.j2
     dest: /opt/stacks/nodered/data/.config.projects.json
@@ -84,6 +106,7 @@
     mode: '0644'
 
 - name: "nodered: clonning repos"
+  when: iotgw_nodered_flows_repo
   ansible.builtin.git:
     repo: "git@github.com:{{ github_org }}/flows.{{ iotgw_hostname }}.git"
     dest: "/opt/stacks/nodered/data/projects/flows.{{ iotgw_hostname }}"
@@ -125,6 +148,7 @@
   loop: "{{ files.files }}"
 
 - name: "nodered: SSH key permissions"
+  when: iotgw_nodered_flows_repo
   ansible.builtin.file:
     path: "/opt/stacks/nodered/data/projects/.sshkeys/admin_id_rsa"
     state: file

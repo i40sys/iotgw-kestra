@@ -24,6 +24,9 @@
   ansible.builtin.set_fact:
     # `secundary_ntp` (sic) is the historical name; `secondary_ntp` is accepted too.
     secundary_ntp: "{{ secundary_ntp | default(secondary_ntp | default('')) }}"
+    # Node-RED's flows repo is optional (`nodered_flows_repo`, default off:
+    # that path has never been provisionable, so no config relies on it).
+    iotgw_nodered_flows_repo: "{{ nodered_flows_repo | default(false) | bool }}"
     # The mosquitto -> EMQX bridge is optional (`mqtt_bridge`). A JSON without
     # the flag (older configs) bridges iff it sets `iiot_host`.
     iotgw_mqtt_bridge: "{{ mqtt_bridge | default(iiot_host is defined and iiot_host is not none and (iiot_host | string | trim) != '') | bool }}"
@@ -72,7 +75,9 @@
         required: [duplicati_access_password, duplicati_docker_target_url, duplicati_system_target_url]
       - tag: nodered
         flag: nodered
-        required: [iotgw_hostname, nodered_user, nodered_password, github_org]
+        required: >-  # + github_org only with the optional flows repo
+          {{ ['iotgw_hostname', 'nodered_user', 'nodered_password']
+             + (['github_org'] if iotgw_nodered_flows_repo else []) }}
       - tag: netxms
         flag: netxms
         required: [netxms_server_port, netxms_web_port, netxms_server_ip,
@@ -110,7 +115,9 @@
       Fill them in the UI Provisioning step, or disable the stack
       {%- if item.flag %} (set `{{ item.flag }}: false`){% endif %}
       {%- if item.tag == 'mosquitto' and iotgw_mqtt_bridge %}, or turn off its
-      optional EMQX bridge (`mqtt_bridge: false`){% endif %}.
+      optional EMQX bridge (`mqtt_bridge: false`){% endif %}
+      {%- if item.tag == 'nodered' and iotgw_nodered_flows_repo %}, or turn off
+      its optional flows repo (`nodered_flows_repo: false`){% endif %}.
     success_msg: "stack '{{ item.tag }}': all required variables present"
     quiet: true
   vars:
@@ -165,11 +172,16 @@
     that: (playbook_dir ~ '/files/' ~ item.path) is file
     fail_msg: >-
       Stack '{{ item.tag }}' needs files/{{ item.path }}, which is not vendored in
-      this repo — the stack cannot be provisioned until it is (task-130 finding).
+      this repo — the stack cannot be provisioned until it is (task-130 finding)
+      {%- if item.flows_repo | default(false) %}. Only its optional flows repo
+      needs it: set `nodered_flows_repo: false` to run Node-RED without one{% endif %}.
     quiet: true
   loop:
     - {tag: mosquitto, path: stacks/mosquitto/etc/mosquitto.conf.j2}
-    - {tag: nodered, path: stacks/nodered/data/.config.projects.json.j2}
+    - {tag: nodered, path: stacks/nodered/data/settings.js}
+    - {tag: nodered, path: stacks/nodered/data/.config.projects.json.j2, flows_repo: true}
   loop_control:
-    label: "{{ item.tag }}"
-  when: iotgw_stack_enabled[item.tag] | default(false)
+    label: "{{ item.tag }}: {{ item.path | basename }}"
+  when:
+    - iotgw_stack_enabled[item.tag] | default(false)
+    - not (item.flows_repo | default(false)) or iotgw_nodered_flows_repo
