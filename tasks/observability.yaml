@@ -17,11 +17,29 @@
   - bin
   - lib
 
-- name: "alloy: Extract glibc.tar.gz, alloy binary requirement."
-  ansible.builtin.unarchive:
-    src: /opt/stacks/alloy/contrib/glibc.tar.gz
-    dest: /opt/stacks/alloy/lib/
+# OpenWrt is musl; the alloy binary needs glibc. contrib/glibc/ holds just the
+# 4 files it links against, from a pinned Debian libc6 (PROVENANCE.md) — the
+# former 18 MB contrib/glibc.tar.gz was never vendored, so this stack failed.
+- name: "alloy: install glibc, alloy binary requirement."
+  ansible.builtin.copy:
+    src: /opt/stacks/alloy/contrib/glibc/
+    dest: /opt/stacks/alloy/lib/x86_64-linux-gnu/
     remote_src: yes
+    mode: preserve
+
+# The binary's ELF interpreter is /lib64/ld-linux-x86-64.so.2; give it a /lib64
+# when the image has none (the /lib link below then covers it).
+- name: "alloy: check /lib64"
+  ansible.builtin.stat:
+    path: /lib64
+  register: alloy_lib64
+
+- name: "alloy: link /lib64 to /lib"
+  ansible.builtin.file:
+    src: /lib
+    dest: /lib64
+    state: link
+  when: not alloy_lib64.stat.exists
 
 - name: "alloy: linking glibc with the O.S."
   ansible.builtin.file:
@@ -34,6 +52,13 @@
     src: /opt/stacks/alloy/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2
     dest: /lib/ld-linux-x86-64.so.2
     state: link
+
+- name: "alloy: link the loader in a real /lib64 directory"
+  ansible.builtin.file:
+    src: /opt/stacks/alloy/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2
+    dest: /lib64/ld-linux-x86-64.so.2
+    state: link
+  when: alloy_lib64.stat.exists and alloy_lib64.stat.isdir and not alloy_lib64.stat.islnk
 
 - name: "alloy: changing permissions for glibc"
   ansible.builtin.file:
