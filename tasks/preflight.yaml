@@ -24,6 +24,9 @@
   ansible.builtin.set_fact:
     # `secundary_ntp` (sic) is the historical name; `secondary_ntp` is accepted too.
     secundary_ntp: "{{ secundary_ntp | default(secondary_ntp | default('')) }}"
+    # The mosquitto -> EMQX bridge is optional (`mqtt_bridge`). A JSON without
+    # the flag (older configs) bridges iff it sets `iiot_host`.
+    iotgw_mqtt_bridge: "{{ mqtt_bridge | default(iiot_host is defined and iiot_host is not none and (iiot_host | string | trim) != '') | bool }}"
 
 - name: "preflight: stack contract (tag -> enable flag -> required variables)"
   ansible.builtin.set_fact:
@@ -54,11 +57,13 @@
         flag: uptime_kuma
         required: [autokuma_username, autokuma_password, iotgw_hostname,
                    local_domain, local_ip_address]
-      - tag: mosquitto
+      - tag: mosquitto    # + the EMQX bridge vars only when mqtt_bridge is on
         flag: mqtt
-        required: [iotgw_hostname, local_ip_address, iiot_host, iiot_mqtt_user,
-                   iiot_mqtt_password, mqtt_bridge_topics, emqx_api_url,
-                   emqx_api_key, emqx_api_secret]
+        required: >-
+          {{ ['iotgw_hostname', 'local_ip_address']
+             + (['iiot_host', 'iiot_mqtt_user', 'iiot_mqtt_password',
+                 'mqtt_bridge_topics', 'emqx_api_url', 'emqx_api_key',
+                 'emqx_api_secret'] if iotgw_mqtt_bridge else []) }}
       - tag: telegraf
         flag: telegraf
         required: [telegraf_config_url, influx_token]
@@ -103,7 +108,9 @@
       Stack '{{ item.tag }}' is enabled but the deployment configuration lacks
       (or leaves empty / CHANGE_ME): {{ _missing | join(', ') }}.
       Fill them in the UI Provisioning step, or disable the stack
-      {%- if item.flag %} (set `{{ item.flag }}: false`){% endif %}.
+      {%- if item.flag %} (set `{{ item.flag }}: false`){% endif %}
+      {%- if item.tag == 'mosquitto' and iotgw_mqtt_bridge %}, or turn off its
+      optional EMQX bridge (`mqtt_bridge: false`){% endif %}.
     success_msg: "stack '{{ item.tag }}': all required variables present"
     quiet: true
   vars:

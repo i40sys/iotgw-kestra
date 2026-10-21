@@ -2,7 +2,7 @@
 
 The **Mosquitto MQTT Broker Stack** provides an MQTT service running inside a Docker container. This setup includes:
 
-- A bi-directional bridge for syncing topics between the local broker and an external broker.
+- An **optional** bi-directional bridge for syncing topics between the local broker and an external broker (EMQX).
 - User authentication.
 - Configuration management through templated configuration files.
 
@@ -41,6 +41,20 @@ This stack is designed to deploy and configure the **Mosquitto MQTT broker**, fo
 - **Ansible** installed for provisioning.
 - Access to the external MQTT broker (e.g., EMQX), including credentials.
 - Clone or access to the repository containing the stack's files.
+
+## Optional EMQX bridge
+
+The bridge is off unless the deployment configuration sets `mqtt_bridge: true`
+(UI: MQTT section, "Bridge to the IIoT EMQX broker"). Without it, mosquitto runs
+standalone with its local users, nothing talks to EMQX, and these variables are
+neither required nor used:
+
+`iiot_host`, `iiot_mqtt_user`, `iiot_mqtt_password`, `mqtt_bridge_topics`,
+`emqx_api_url`, `emqx_api_key`, `emqx_api_secret`.
+
+With `mqtt_bridge: true` all seven are required (preflight fails otherwise).
+A configuration without the flag at all (older ones) bridges iff it sets
+`iiot_host`.
 
 ## Configuration and Deployment
 
