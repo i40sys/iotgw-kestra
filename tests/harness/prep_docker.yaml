@@ -12,15 +12,21 @@
 
 - ansible.builtin.import_tasks: tasks/system_docker.yaml
 
-# system_docker.yaml writes dockerd's config but nothing restarts dockerd: on a
-# gateway it takes effect at the next boot. The harness restarts it instead.
-- name: "prep: restart dockerd with the system stack's config (stands in for the reboot)"
-  ansible.builtin.raw: >-
-    /etc/init.d/dockerd restart;
-    for i in $(seq 1 90); do docker info >/dev/null 2>&1 && exit 0; sleep 1; done;
-    echo "dockerd did not come up"; logread | grep -i docker | tail -20; exit 1
-  changed_when: false
-
-- name: "prep: dockerd uses the daemon.json data-root"
+- name: "check: dockerd runs with the system stack's daemon.json (no reboot needed)"
   ansible.builtin.raw: docker info --format '{{ "{{" }} .DockerRootDir {{ "}}" }}' | grep -qx /opt/docker
   changed_when: false
+
+- name: "harness: dockerd pid before re-running the system stack's docker part"
+  ansible.builtin.raw: pidof dockerd
+  register: dockerd_pid_before
+  changed_when: false
+
+# A second pass with the config unchanged must NOT restart dockerd (that would
+# stop every container on each re-provisioning).
+- ansible.builtin.import_tasks: tasks/system_docker.yaml
+
+- name: "check: an unchanged config does not restart dockerd"
+  ansible.builtin.raw: pidof dockerd
+  register: dockerd_pid_after
+  changed_when: false
+  failed_when: dockerd_pid_after.stdout | trim != dockerd_pid_before.stdout | trim

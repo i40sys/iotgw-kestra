@@ -36,9 +36,9 @@ image is built once and cached (`iotgw-harness-target:<hash>`). CI:
 | `test_lldpd.yaml` | lldpd | daemon running |
 
 Docker stacks first run `prep_docker.yaml`: the packages they use from
-`files/lists/packages.lst` and the real `tasks/system_docker.yaml`, then a
-dockerd restart (on a gateway the system stack's dockerd config only applies at
-the next boot).
+`files/lists/packages.lst` and the real `tasks/system_docker.yaml`, twice. It
+checks that dockerd restarts and runs with the system stack's `daemon.json`
+when the config changes, and that it is left alone when the config is unchanged.
 
 Not covered: `system` (rewrites `/etc/config/network`, needs a live wg0),
 `ssh_ca` (needs the backend + pki-manager), the EMQX bridge and the Node-RED
