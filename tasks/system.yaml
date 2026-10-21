@@ -325,41 +325,7 @@
   ansible.builtin.command: uci commit dhcp
   when: dhcp_hosts is defined and dhcp_hosts is not none and dhcp_hosts | length > 0
 
-- name: "system, dockerd: configuration"
-  ansible.builtin.template:
-    src: templates/dockerd.j2
-    dest: /etc/config/dockerd
-    owner: root
-    group: root
-    mode: '0644'
-
-- name: "system, dockerd: creating directory for daemon.json"
-  ansible.builtin.file:
-    path: /opt/docker/etc
-    state: directory
-    owner: root
-    group: root
-    mode: '0755'
-
-- name: "system, dockerd: configuration daemon.json"
-  ansible.builtin.template:
-    src: templates/daemon.json.j2
-    dest: /opt/docker/etc/daemon.json
-    owner: root
-    group: root
-    mode: '0644'
-
-- name: "system, docker compose: copying script for downloading and installing plugin"
-  ansible.builtin.copy:
-    src: install_docker-compose.sh
-    dest: /tmp/install_docker-compose.sh
-    owner: root
-    group: root
-    mode: '0755'
-
-- name: "system, docker compose: run script for downloading and installing plugin"
-  ansible.builtin.command:
-    cmd: /tmp/install_docker-compose.sh
+- ansible.builtin.import_tasks: system_docker.yaml
 
 - name: "system, authossh: configuration"
   ansible.builtin.template:

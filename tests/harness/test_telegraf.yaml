@@ -1,0 +1,33 @@
+---
+# Harness test: telegraf. CONFIG_TELEGRAF is a URL telegraf fetches at start;
+# the harness serves a minimal config from the target itself so the container
+# can stay up without the real InfluxDB.
+- name: telegraf stack on an OpenWrt container
+  hosts: openwrt
+  remote_user: root
+  gather_facts: false
+  vars:
+    telegraf: true
+    influx_token: harness-token
+    telegraf_config_url: http://127.0.0.1:8099/telegraf.conf
+  roles:
+    - gekmihesg.openwrt
+  tasks:
+    - ansible.builtin.import_tasks: tests/harness/prep_docker.yaml
+    - name: "harness: serve a minimal telegraf config on :8099"
+      ansible.builtin.raw: >-
+        mkdir -p /tmp/tconf && printf '[agent]\n  interval = "10s"\n[[inputs.mem]]\n[[outputs.discard]]\n' > /tmp/tconf/telegraf.conf &&
+        (cd /tmp/tconf && start-stop-daemon -S -b -x /usr/bin/python3 -- -m http.server 8099 --bind 127.0.0.1)
+      changed_when: false
+    - ansible.builtin.import_tasks: tasks/telegraf.yaml
+    - ansible.builtin.import_tasks: tasks/telegraf.yaml
+
+    - name: "check: the .env carries the token and config URL"
+      ansible.builtin.raw: grep -qx "INFLUX_TOKEN='harness-token'" /opt/stacks/telegraf/.env && grep -q "CONFIG_TELEGRAF='http://127.0.0.1:8099/telegraf.conf'" /opt/stacks/telegraf/.env
+      changed_when: false
+
+    - name: "check: the telegraf container stays running"
+      ansible.builtin.raw: sleep 15; docker inspect -f '{{ "{{" }}.State.Running{{ "}}" }} {{ "{{" }}.RestartCount{{ "}}" }}' telegraf
+      register: tstate
+      changed_when: false
+      failed_when: tstate.stdout | trim != "true 0"

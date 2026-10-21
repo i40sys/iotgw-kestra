@@ -1,0 +1,40 @@
+---
+# Harness test: mosquitto standalone (mqtt: true, mqtt_bridge off — the EMQX
+# bridge needs a reachable EMQX API, so it is not exercised here).
+- name: mosquitto stack on an OpenWrt container
+  hosts: openwrt
+  remote_user: root
+  gather_facts: false
+  vars:
+    iotgw_hostname: gw-harness
+    local_ip_address: "{{ ansible_host }}"
+    mqtt: true
+    mqtt_bridge: false
+    users: [{username: hmi, password: harness-pass}]
+  roles:
+    - gekmihesg.openwrt
+  tasks:
+    - ansible.builtin.import_tasks: tests/harness/prep_docker.yaml
+    - ansible.builtin.import_tasks: tasks/mosquitto.yaml
+    # Re-provisioning over a running stack (teardown path) must converge too.
+    - ansible.builtin.import_tasks: tasks/mosquitto.yaml
+
+    - name: "check: no bridge in mosquitto.conf"
+      ansible.builtin.raw: "! grep -q '^connection ' /opt/stacks/mosquitto/etc/mosquitto.conf"
+      changed_when: false
+
+    - name: "check: the mqtt container is running"
+      ansible.builtin.raw: docker inspect -f '{{ "{{" }}.State.Running{{ "}}" }}' mqtt | grep -qx true
+      changed_when: false
+
+    - name: "check: a local user can publish and subscribe on {{ local_ip_address }}:1883"
+      ansible.builtin.raw: >-
+        (docker exec mqtt mosquitto_sub -h {{ local_ip_address }} -u hmi -P harness-pass -t harness/t -C 1 -W 10 > /tmp/sub.out &);
+        sleep 2;
+        docker exec mqtt mosquitto_pub -h {{ local_ip_address }} -u hmi -P harness-pass -t harness/t -m ok;
+        sleep 2; grep -qx ok /tmp/sub.out
+      changed_when: false
+
+    - name: "check: anonymous clients are refused"
+      ansible.builtin.raw: "! docker exec mqtt mosquitto_pub -h {{ local_ip_address }} -t harness/t -m x"
+      changed_when: false

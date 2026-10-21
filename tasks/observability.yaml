@@ -18,13 +18,15 @@
   - lib
 
 # OpenWrt is musl; the alloy binary needs glibc. contrib/glibc/ holds just the
-# 4 files it links against, from a pinned Debian libc6 (PROVENANCE.md) — the
+# 5 files it needs (glibc + libgcc_s), from pinned Debian packages (PROVENANCE.md) — the
 # former 18 MB contrib/glibc.tar.gz was never vendored, so this stack failed.
+# From the CONTROLLER, not remote_src: on OpenWrt the gekmihesg.openwrt role
+# replaces `copy` with a shell version that cannot copy a directory remotely
+# ("Remote copy does not support recursive copy of directory").
 - name: "alloy: install glibc, alloy binary requirement."
   ansible.builtin.copy:
-    src: /opt/stacks/alloy/contrib/glibc/
+    src: stacks/alloy/contrib/glibc/
     dest: /opt/stacks/alloy/lib/x86_64-linux-gnu/
-    remote_src: yes
     mode: preserve
 
 # The binary's ELF interpreter is /lib64/ld-linux-x86-64.so.2; give it a /lib64

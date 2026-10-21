@@ -1,0 +1,27 @@
+# OpenWrt stack harness (tests/harness/): every provisioning stack it covers is
+# run, twice, against a throw-away OpenWrt 23.05 container with the production
+# runner image + gekmihesg.openwrt role. Kestra clones `main` on every run, so
+# a red run here means the next gateway provisioning would fail the same way.
+name: harness
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  stack:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        test: [observability, mosquitto, nodered, telegraf, duplicati, netxms, lldpd]
+    steps:
+      - uses: actions/checkout@v4
+      - name: tests/harness/test_${{ matrix.test }}.yaml
+        run: tests/harness/run.sh tests/harness/test_${{ matrix.test }}.yaml

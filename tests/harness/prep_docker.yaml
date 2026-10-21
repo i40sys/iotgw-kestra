@@ -1,0 +1,26 @@
+---
+# Shared by the docker-stack tests: bring the target to where the `system`
+# stack leaves a gateway for them. Packages: the subset of
+# files/lists/packages.lst these stacks use (the full list is ~350 packages).
+# Then the REAL tasks/system_docker.yaml (dockerd config + compose plugin).
+- name: "prep: packages the system stack provides"
+  ansible.builtin.raw: >-
+    opkg update >/dev/null &&
+    opkg install bash curl docker dockerd shadow-usermod shadow-groupmod
+    python3-requests python3-urllib python3-logging python3-email >/dev/null
+  changed_when: false
+
+- ansible.builtin.import_tasks: tasks/system_docker.yaml
+
+# system_docker.yaml writes dockerd's config but nothing restarts dockerd: on a
+# gateway it takes effect at the next boot. The harness restarts it instead.
+- name: "prep: restart dockerd with the system stack's config (stands in for the reboot)"
+  ansible.builtin.raw: >-
+    /etc/init.d/dockerd restart;
+    for i in $(seq 1 90); do docker info >/dev/null 2>&1 && exit 0; sleep 1; done;
+    echo "dockerd did not come up"; logread | grep -i docker | tail -20; exit 1
+  changed_when: false
+
+- name: "prep: dockerd uses the daemon.json data-root"
+  ansible.builtin.raw: docker info --format '{{ "{{" }} .DockerRootDir {{ "}}" }}' | grep -qx /opt/docker
+  changed_when: false
