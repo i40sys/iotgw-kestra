@@ -24,8 +24,10 @@
   ansible.builtin.set_fact:
     # `secundary_ntp` (sic) is the historical name; `secondary_ntp` is accepted too.
     secundary_ntp: "{{ secundary_ntp | default(secondary_ntp | default('')) }}"
-    # Node-RED's flows repo is optional (`nodered_flows_repo`, default off:
-    # that path has never been provisionable, so no config relies on it).
+    # Node-RED's flows repo is optional (`nodered_flows_repo`, default off):
+    # the controller clones github.com/<github_org>/flows.<iotgw_hostname>
+    # (optional read-only `nodered_flows_token`, optional `nodered_flows_branch`)
+    # and copies it to the gateway as the active project (tasks/nodered.yaml).
     iotgw_nodered_flows_repo: "{{ nodered_flows_repo | default(false) | bool }}"
     # The mosquitto -> EMQX bridge is optional (`mqtt_bridge`). A JSON without
     # the flag (older configs) bridges iff it sets `iiot_host`.
@@ -159,12 +161,19 @@
       - management_cidrs is not defined or management_cidrs is none or management_cidrs | map(attribute='cidr', default='') | map('string') | map('trim') | reject('match', '^([0-9]{1,3}\\.){3}[0-9]{1,3}/[0-9]{1,2}$') | list | length == 0
       - users is not defined or users is none or (users | rejectattr('username', 'defined') | list + users | rejectattr('password', 'defined') | list) | length == 0
       - mqtt_bridge_topics is not defined or (mqtt_bridge_topics is iterable and mqtt_bridge_topics is not string)
+      # Node-RED flows repo (only when it is on): GitHub org (same pattern as the
+      # schema), an optional branch name, an optional token without whitespace.
+      - not (iotgw_nodered_flows_repo and iotgw_stack_enabled['nodered']) or github_org is not defined or (github_org | string) is match('^[A-Za-z0-9-]+$')
+      - not (iotgw_nodered_flows_repo and iotgw_stack_enabled['nodered']) or (nodered_flows_branch | default('', true) | string | trim) == '' or ((nodered_flows_branch | string | trim) is match('^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$') and (nodered_flows_branch | string) is not search('\\.\\.|//|/$|\\.lock$'))
+      - not (iotgw_nodered_flows_repo and iotgw_stack_enabled['nodered']) or (nodered_flows_token | default('', true) | string) is not search('\\s')
     fail_msg: >-
       A provisioning value has the wrong shape (IPv4 addresses, LAN netmask
       (255.255.255.0 or a prefix 8-30), hostname,
       integer ports, "yes"/"no" NetXMS proxies, dhcp_hosts[{name,ip,mac}],
       allowed_internet[{ip}], management_cidrs[{cidr}], users[{username,password}],
-      mqtt_bridge_topics[string]). See the failed assertion above.
+      mqtt_bridge_topics[string], Node-RED flows repo: github_org [A-Za-z0-9-],
+      nodered_flows_branch a branch name, nodered_flows_token without spaces).
+      See the failed assertion above.
     quiet: true
 
 # ---- vendored stack files the enabled stacks need on the controller ----------
@@ -182,6 +191,8 @@
     - {tag: mosquitto, path: stacks/mosquitto/etc/mosquitto.conf.j2}
     - {tag: nodered, path: stacks/nodered/data/settings.js}
     - {tag: nodered, path: stacks/nodered/data/.config.projects.json.j2, flows_repo: true}
+    - {tag: nodered, path: stacks/nodered/data/.gitconfig.j2, flows_repo: true}
+    - {tag: nodered, path: stacks/nodered/flows-sync.sh, flows_repo: true}
   loop_control:
     label: "{{ item.tag }}: {{ item.path | basename }}"
   when:
