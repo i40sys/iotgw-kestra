@@ -1,0 +1,8 @@
+{
+    "projects": {
+        "{{ iotgw_nodered_project }}": {
+            "credentialSecret": {{ iotgw_nodered_credential_secret | to_json }}
+        }
+    },
+    "activeProject": "{{ iotgw_nodered_project }}"
+}
