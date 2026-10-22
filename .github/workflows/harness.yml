@@ -20,7 +20,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        test: [observability, mosquitto, nodered, telegraf, duplicati, netxms, lldpd, firewall]
+        test: [observability, mosquitto, nodered, telegraf, duplicati, netxms, lldpd, firewall, containers_exporter, vscode]
     steps:
       - uses: actions/checkout@v4
       - name: tests/harness/test_${{ matrix.test }}.yaml

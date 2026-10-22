@@ -45,7 +45,7 @@ The `docker-compose.yml` defines the VSCode service:
 ```yaml
 services:
   code:
-    image: lscr.io/linuxserver/code-server:latest
+    image: lscr.io/linuxserver/code-server:4.141.0-ls371@sha256:05e7025352fc8a8cdfbce07bf80c26c6dc7a0d1f1e99b2bb5e19b6a98d559897
     container_name: vscode
     volumes:
       - /opt/stacks/vscode/config:/config

@@ -1,0 +1,39 @@
+---
+# Harness test: VSCode (code-server, host network, :8443, PASSWORD =
+# root_password). Only checks the pinned image comes up and answers.
+- name: vscode stack on an OpenWrt container
+  hosts: openwrt
+  remote_user: root
+  gather_facts: false
+  vars:
+    vscode: true
+    root_password: harness-pass
+  roles:
+    - gekmihesg.openwrt
+  tasks:
+    - ansible.builtin.import_tasks: tests/harness/prep_docker.yaml
+    - ansible.builtin.import_tasks: tasks/vscode.yaml
+    - ansible.builtin.import_tasks: tasks/vscode.yaml
+
+    - name: "check: the container runs the pinned image"
+      ansible.builtin.raw: >-
+        docker image inspect -f '{{ "{{" }}join .RepoDigests " "{{ "}}" }}'
+        $(docker inspect -f '{{ "{{" }}.Image{{ "}}" }}' vscode-editor-1)
+      register: img
+      changed_when: false
+      failed_when: (lookup('file', 'files/stacks/vscode/compose.yaml') | regex_search('@(sha256:[0-9a-f]{64})', '\\1') | first) not in img.stdout
+
+    - name: "check: code-server is alive on :8443"
+      ansible.builtin.raw: curl -fsS http://127.0.0.1:8443/healthz
+      register: health
+      retries: 40
+      delay: 3
+      # {"status":"expired"} until an editor client connects: answering is the check.
+      until: health.rc == 0 and '"status"' in health.stdout
+      changed_when: false
+
+    - name: "check: the editor asks for the password (no anonymous access)"
+      ansible.builtin.raw: curl -s -o /dev/null -w '%{http_code} %{redirect_url}' http://127.0.0.1:8443/
+      register: root_page
+      changed_when: false
+      failed_when: not (root_page.stdout is match('^302 .*/login'))
