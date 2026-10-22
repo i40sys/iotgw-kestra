@@ -155,6 +155,8 @@
       - dhcp_hosts is not defined or dhcp_hosts is none or (dhcp_hosts | rejectattr('name', 'defined') | list + dhcp_hosts | rejectattr('ip', 'defined') | list + dhcp_hosts | rejectattr('mac', 'defined') | list) | length == 0
       - allowed_internet is not defined or allowed_internet is none or allowed_internet | rejectattr('ip', 'defined') | list | length == 0
       - management_cidrs is not defined or management_cidrs is none or management_cidrs | rejectattr('cidr', 'defined') | list | length == 0
+      # rendered into templates/firewall.j2 as `list entry '<cidr>'` (same pattern as the schema).
+      - management_cidrs is not defined or management_cidrs is none or management_cidrs | map(attribute='cidr', default='') | map('string') | map('trim') | reject('match', '^([0-9]{1,3}\\.){3}[0-9]{1,3}/[0-9]{1,2}$') | list | length == 0
       - users is not defined or users is none or (users | rejectattr('username', 'defined') | list + users | rejectattr('password', 'defined') | list) | length == 0
       - mqtt_bridge_topics is not defined or (mqtt_bridge_topics is iterable and mqtt_bridge_topics is not string)
     fail_msg: >-

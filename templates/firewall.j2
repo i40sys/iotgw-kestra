@@ -187,12 +187,17 @@ config redirect
   option dest_ip '{{ local_ip_address }}'
   option dest_port '1883'
 
+# Sources allowed to reach the web UIs above (rules with ipset 'ManagementIPs').
+# Loopback plus the deployment's `management_cidrs` ([{cidr}], validated by
+# tasks/preflight.yaml) — never a site's address hard-coded for every gateway.
 config ipset
   option name 'ManagementIPs'
   option family 'ipv4'
   list match 'src_net'
   list entry '127.0.0.0/8'
-  list entry '10.2.0.47/32'
+{% for m in management_cidrs | default([], true) %}
+  list entry '{{ m.cidr | trim }}'
+{% endfor %}
 
 {% if netxms_server_ip | default('') | trim %}
 config rule

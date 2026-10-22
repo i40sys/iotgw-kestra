@@ -27,12 +27,7 @@
   loop: "{{ allowed_internet }}"
   when: allowed_internet is defined and allowed_internet | length > 0
 
-- name: "firewall: Add Management IPs"
-  ansible.builtin.shell: |
-    IP_SET_ID=$(uci show firewall | grep \@ipset|grep \'ManagementIPs\' | cut -f 2 -d "[" | cut -f 1 -d "]")
-    uci add_list firewall.@ipset[${IP_SET_ID}].entry='{{ item.cidr }}'
-  loop: "{{ management_cidrs }}"
-  when: management_cidrs is defined and management_cidrs | length > 0
+# ManagementIPs entries (management_cidrs) are rendered by templates/firewall.j2.
 
 - name: "system: uci commit changes"
   uci:

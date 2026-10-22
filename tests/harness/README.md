@@ -34,6 +34,7 @@ image is built once and cached (`iotgw-harness-target:<hash>`). CI:
 | `test_duplicati.yaml` | duplicati | both backup jobs valid JSON, web UI on `:8200` |
 | `test_netxms.yaml` | NetXMS agent | `nxagentd` running |
 | `test_lldpd.yaml` | lldpd | daemon running |
+| `test_firewall.yaml` | firewall (`tasks/firewall.yaml`, three passes: two `management_cidrs`, `[]`, `null`) | `ManagementIPs` = loopback + `management_cidrs` only, `fw4 check` (nft check mode, never loaded) passes, the nft set carries the CIDRs |
 
 Docker stacks first run `prep_docker.yaml`: the packages they use from
 `files/lists/packages.lst` and the real `tasks/system_docker.yaml`, twice. It
