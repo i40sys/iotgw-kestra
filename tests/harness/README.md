@@ -29,7 +29,8 @@ image is built once and cached (`iotgw-harness-target:<hash>`). CI:
 |---|---|---|
 | `test_observability.yaml` | Alloy | glibc files, ELF loader path, binary runs, configs rendered, enabled at boot, `:12345/-/ready` |
 | `test_mosquitto.yaml` | mosquitto (no bridge) | no bridge block, container up, local user pub/sub, anonymous refused |
-| `test_nodered.yaml` | Node-RED (no flows repo) | 3.1 → current upgrade: editor up, API 401 without login, login works, runtime version, projects off, the 3.1 flow loaded after the upgrade |
+| `test_nodered.yaml` | Node-RED (no flows repo) | 3.1 → current upgrade: editor up, API 401 without login, login works, runtime version, projects off, the 3.1 flow loaded after the upgrade; v0.7.1 system key adopted; v3 settings (title, user key, pretty flows, no telemetry, tours off); a flow credential still decrypts after re-provisioning |
+| `test_nodered_flows.yaml` | Node-RED + flows repo | fixture repo on the controller (`iotgw_nodered_flows_url`): project installed with a plain origin and no credential/token/key on the gateway, projects mode with it active, its flow loaded, git committer; clean copy refreshed to a new commit; an uncommitted editor change and an unpushed commit are kept; the project credential still decrypts, key unchanged |
 | `test_telegraf.yaml` | telegraf | `.env`, container stays up (config served by the target) |
 | `test_duplicati.yaml` | duplicati | both backup jobs valid JSON, web UI on `:8200` |
 | `test_netxms.yaml` | NetXMS agent | `nxagentd` running |
@@ -41,5 +42,6 @@ checks that dockerd restarts and runs with the system stack's `daemon.json`
 when the config changes, and that it is left alone when the config is unchanged.
 
 Not covered: `system` (rewrites `/etc/config/network`, needs a live wg0),
-`ssh_ca` (needs the backend + pki-manager), the EMQX bridge and the Node-RED
-flows repo (need external services).
+`ssh_ca` (needs the backend + pki-manager), the EMQX bridge (needs an external
+service). The Node-RED flows repo is tested against a local fixture repo, not
+GitHub (the https clone and the token header are not exercised).
