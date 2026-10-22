@@ -6,18 +6,28 @@
 # socket and the monitors declared in compose.yml/.env. Monitors cover only the
 # gateway's own services (its containers, DNS, MQTT broker and Alloy).
 
-- name: "uptime-kuma: Check if Docker stack is running"
-  community.docker.docker_compose_v2:
-    project_src: /opt/stacks/uptime
-    state: present
-  register: stack_status
-  ignore_errors: true
+# Re-provisioning tears the existing stack down before its directory is
+# replaced; a fresh gateway has none. Look for its compose file (every name
+# `docker compose` accepts, so a stack an older revision deployed is found too)
+# instead of running compose on a missing directory, which logged a red, ignored
+# `fatal: ... is not a directory` on every first install (and `state: present`
+# started an existing stack just to tear it down).
+- name: "uptime-kuma: Look for an existing Docker stack"
+  ansible.builtin.stat:
+    path: "/opt/stacks/uptime/{{ item }}"
+  loop: [compose.yaml, compose.yml, docker-compose.yaml, docker-compose.yml, .env]
+  register: stack_files
 
-- name: "uptime-kuma: Teardown the Docker stack if running"
+- name: "uptime-kuma: Teardown the existing Docker stack"
   community.docker.docker_compose_v2:
     project_src: /opt/stacks/uptime
     state: absent
-  when: stack_status is not failed
+  vars:
+    found: "{{ stack_files.results | selectattr('stat.exists') | map(attribute='item') | list }}"
+  # Also needs .env: compose will not load this project without it (not even
+  # to tear it down), and it is written just before the stack starts, so a
+  # directory without it (a run that failed half-way) has no stack running.
+  when: found | reject('eq', '.env') | list | length > 0 and '.env' in found
 
 - name: "uptime-kuma: Remove directory /opt/stacks/uptime"
   ansible.builtin.file:

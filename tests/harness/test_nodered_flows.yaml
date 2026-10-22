@@ -1,0 +1,242 @@
+---
+# Harness test: Node-RED with the flows repo (nodered_flows_repo). The CONTROLLER
+# clones the repo and copies it to the gateway; the gateway holds no Git
+# credential. The repo here is a fixture created on the controller (this runner
+# container) and reached through the internal `iotgw_nodered_flows_url`
+# override; production clones https://github.com/<github_org>/flows.<host>.git.
+# Provisioned four times: install, refresh (clean copy), keep (uncommitted
+# editor change), keep (unpushed local commit).
+- name: nodered stack with a flows repo on an OpenWrt container
+  hosts: openwrt
+  remote_user: root
+  gather_facts: false
+  vars:
+    iotgw_hostname: gw-harness
+    local_domain: harness.lan
+    nodered: true
+    nodered_user: admin
+    nodered_password: harness-pass
+    nodered_flows_repo: true
+    github_org: i40sys
+    # file:// ignores it, but it must never reach the gateway either way.
+    nodered_flows_token: harness-flows-token-0123456789
+    fixture: /tmp/harness-flows
+    iotgw_nodered_flows_url: "file:///tmp/harness-flows/flows.gw-harness.git"
+    project_dir: /opt/stacks/nodered/data/projects/flows.gw-harness
+    login: >-
+      curl -s -d 'client_id=node-red-admin&grant_type=password&scope=*&username=admin&password=harness-pass'
+      http://127.0.0.1:1880/auth/token | sed -n 's/.*"access_token":"\([^"]*\)".*/\1/p'
+    # fixture_commit <label>: commit a flows.json with one tab <label> to the fixture repo.
+    fixture_commit: >-
+      git -C {{ fixture }}/work -c user.name=harness -c user.email=harness@example.invalid
+  roles:
+    - gekmihesg.openwrt
+  tasks:
+    - ansible.builtin.import_tasks: tests/harness/prep_docker.yaml
+
+    - name: "harness: fixture flows repo on the controller (flows.json + package.json, label A)"
+      delegate_to: localhost
+      ansible.builtin.shell: |
+        set -eu
+        rm -rf {{ fixture }} && mkdir -p {{ fixture }}/work
+        git init -q --bare -b main {{ fixture }}/flows.gw-harness.git
+        cd {{ fixture }}/work && git init -q -b main
+        cat > package.json <<'EOF'
+        {
+            "name": "flows.gw-harness",
+            "description": "harness fixture project",
+            "version": "0.0.1",
+            "dependencies": {},
+            "node-red": {"settings": {"flowFile": "flows.json", "credentialsFile": "flows_cred.json"}}
+        }
+        EOF
+        printf '*.backup\n' > .gitignore
+        echo '[{"id":"repo-tab","type":"tab","label":"from-repo-A"}]' > flows.json
+        git add -A
+        {{ fixture_commit }} commit -qm A
+        git remote add origin {{ fixture }}/flows.gw-harness.git
+        git push -q origin main
+      changed_when: false
+
+    # ---- 1: first provisioning installs the project --------------------------------
+    - ansible.builtin.import_tasks: tasks/nodered.yaml
+
+    - name: "check: the project is on the gateway, owned by uid 1000"
+      ansible.builtin.raw: >-
+        [ -f {{ project_dir }}/flows.json ] && [ -d {{ project_dir }}/.git ] &&
+        [ "$(ls -ln {{ project_dir }}/.git/config | awk '{print $3}')" = 1000 ]
+      changed_when: false
+
+    - name: "check: .git/config has a plain origin and no credential section"
+      ansible.builtin.raw: >-
+        grep -qF 'url = file:///tmp/harness-flows/flows.gw-harness.git' {{ project_dir }}/.git/config &&
+        ! grep -Eiq 'extraheader|credential|authorization|token|@' {{ project_dir }}/.git/config
+      changed_when: false
+
+    - name: "check: the flows token is nowhere on the gateway, no SSH key either"
+      ansible.builtin.raw: >-
+        ! grep -rqF harness-flows-token /opt/stacks/nodered &&
+        [ ! -e /opt/stacks/nodered/data/projects/.sshkeys ] && [ ! -e /root/.ssh/id_rsa ]
+      changed_when: false
+
+    - name: "check: the controller left no checkout behind"
+      delegate_to: localhost
+      ansible.builtin.shell: "! ls -d /tmp/iotgw-nodered-* 2>/dev/null"
+      changed_when: false
+
+    - name: "check: the editor answers on :1880"
+      ansible.builtin.raw: curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:1880/
+      register: up
+      retries: 30
+      delay: 3
+      until: up.stdout == "200"
+      changed_when: false
+
+    - name: "check: the admin API refuses anonymous access"
+      ansible.builtin.raw: curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:1880/projects
+      register: anon
+      changed_when: false
+      failed_when: anon.stdout != "401"
+
+    - name: "check: login works; projects mode with flows.gw-harness active, project key, git committer"
+      ansible.builtin.raw: >-
+        t=$({{ login }}); [ -n "$t" ] &&
+        curl -s -H "Authorization: Bearer $t" http://127.0.0.1:1880/projects | grep -q '"active":"flows.gw-harness"' &&
+        s=$(curl -s -H "Authorization: Bearer $t" http://127.0.0.1:1880/settings) &&
+        echo "$s" | grep -q '"flowEncryptionType":"project"' &&
+        echo "$s" | grep -q '"name":"gw-harness","email":"gw-harness@harness.lan"'
+      register: proj
+      retries: 20
+      delay: 3
+      until: proj.rc == 0
+      changed_when: false
+
+    - name: "check: the repo's flow (A) is loaded"
+      ansible.builtin.raw: >-
+        t=$({{ login }});
+        curl -s -H "Authorization: Bearer $t" http://127.0.0.1:1880/flows | grep -q '"label":"from-repo-A"'
+      register: flows
+      retries: 20
+      delay: 3
+      until: flows.rc == 0
+      changed_when: false
+
+    - name: "harness: the credential key after the first run"
+      ansible.builtin.raw: sha256sum /opt/stacks/nodered/data/.iotgw-credential-secret
+      register: key1
+      changed_when: false
+
+    # ---- 2: clean gateway copy + a new commit in the repo -> refreshed ------------
+    - name: "harness: commit B to the fixture repo"
+      delegate_to: localhost
+      ansible.builtin.shell: |
+        set -eu
+        cd {{ fixture }}/work
+        echo '[{"id":"repo-tab","type":"tab","label":"from-repo-B"}]' > flows.json
+        {{ fixture_commit }} commit -qam B && git push -q origin main
+      changed_when: false
+
+    - ansible.builtin.import_tasks: tasks/nodered.yaml
+
+    - name: "check: the clean copy was refreshed to B and B is loaded"
+      ansible.builtin.raw: >-
+        t=$({{ login }});
+        curl -s -H "Authorization: Bearer $t" http://127.0.0.1:1880/flows | grep -q '"label":"from-repo-B"'
+      register: flows_b
+      retries: 20
+      delay: 3
+      until: flows_b.rc == 0
+      changed_when: false
+
+    # ---- 3: an uncommitted editor change (with a credential) -> kept --------------
+    - name: "harness: the operator deploys a change with a flow credential (not committed)"
+      ansible.builtin.raw: >-
+        t=$({{ login }});
+        curl -sf -H "Authorization: Bearer $t" -H 'Content-Type: application/json'
+        -H 'Node-RED-Deployment-Type: full' http://127.0.0.1:1880/flows -d
+        '[{"id":"repo-tab","type":"tab","label":"edited-on-gateway"},
+          {"id":"harness-broker","type":"mqtt-broker","name":"b","broker":"127.0.0.1","port":"1883",
+           "credentials":{"user":"cred-user","password":"cred-pass"}}]'
+      changed_when: false
+
+    - name: "check: the project's flows_cred.json is encrypted (project key, not plaintext)"
+      ansible.builtin.raw: >-
+        grep -q '"[$]"' {{ project_dir }}/flows_cred.json && ! grep -q cred-pass {{ project_dir }}/flows_cred.json
+      register: enc
+      retries: 20
+      delay: 3
+      until: enc.rc == 0
+      changed_when: false
+
+    - name: "harness: commit C to the fixture repo"
+      delegate_to: localhost
+      ansible.builtin.shell: |
+        set -eu
+        cd {{ fixture }}/work
+        echo '[{"id":"repo-tab","type":"tab","label":"from-repo-C"}]' > flows.json
+        {{ fixture_commit }} commit -qam C && git push -q origin main
+      changed_when: false
+
+    - ansible.builtin.import_tasks: tasks/nodered.yaml
+
+    - name: "check: the run kept the gateway copy (uncommitted changes)"
+      ansible.builtin.assert:
+        that: nodered_flows_sync.stdout is search('flows-sync. kept uncommitted changes')
+        quiet: true
+
+    - name: "check: the editor change is still loaded, C was not applied"
+      ansible.builtin.raw: >-
+        t=$({{ login }}); f=$(curl -s -H "Authorization: Bearer $t" http://127.0.0.1:1880/flows);
+        echo "$f" | grep -q '"label":"edited-on-gateway"' && ! echo "$f" | grep -q from-repo-C
+      register: flows_kept
+      retries: 20
+      delay: 3
+      until: flows_kept.rc == 0
+      changed_when: false
+
+    - name: "check: the flow credential still decrypts after re-provisioning"
+      ansible.builtin.raw: >-
+        t=$({{ login }});
+        curl -s -H "Authorization: Bearer $t" http://127.0.0.1:1880/credentials/mqtt-broker/harness-broker
+        | grep -q '"user":"cred-user","has_password":true'
+      changed_when: false
+
+    # ---- 4: the change committed in the editor but not pushed -> kept -------------
+    - name: "harness: the operator commits locally (Node-RED's git, its committer config)"
+      ansible.builtin.raw: >-
+        docker exec -u 1000 $(docker ps -q --filter name=nodered) sh -c
+        'cd /data/projects/flows.gw-harness && git add -A && git commit -qm "edited on gateway" &&
+        git log -1 --format=%ae'
+      register: local_commit
+      changed_when: false
+      failed_when: local_commit.rc != 0 or local_commit.stdout | trim != 'gw-harness@harness.lan'
+
+    - ansible.builtin.import_tasks: tasks/nodered.yaml
+
+    - name: "check: the run kept the gateway copy (unpushed commit)"
+      ansible.builtin.assert:
+        that: nodered_flows_sync.stdout is search('flows-sync. kept local commit')
+        quiet: true
+
+    - name: "check: the local commit is still HEAD and its flow is loaded"
+      ansible.builtin.raw: >-
+        [ "$(cat {{ project_dir }}/.git/HEAD)" = 'ref: refs/heads/main' ] &&
+        grep -q edited-on-gateway {{ project_dir }}/flows.json &&
+        t=$({{ login }}); curl -s -H "Authorization: Bearer $t" http://127.0.0.1:1880/flows | grep -q '"label":"edited-on-gateway"'
+      register: flows_commit
+      retries: 20
+      delay: 3
+      until: flows_commit.rc == 0
+      changed_when: false
+
+    - name: "check: the credential key never changed across the four runs"
+      ansible.builtin.raw: sha256sum /opt/stacks/nodered/data/.iotgw-credential-secret
+      register: key4
+      changed_when: false
+      failed_when: key4.stdout != key1.stdout
+
+    - name: "check: the credential key file is private to the node-red user"
+      ansible.builtin.raw: ls -ln /opt/stacks/nodered/data/.iotgw-credential-secret | awk '{print $1, $3}'
+      register: keymode
+      changed_when: false
+      failed_when: keymode.stdout | trim != '-rw------- 1000'

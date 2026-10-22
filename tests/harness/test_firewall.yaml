@@ -1,0 +1,71 @@
+---
+# Harness test: firewall (the real tasks/firewall.yaml). The task file rewrites
+# /etc/config/firewall and enables the service but does not restart it, so
+# nothing is applied to the target's live ruleset: the checks validate the
+# rendered config with uci and `fw4 check` (fw4 print | nft -c — check mode,
+# never loaded), so the harness's own SSH is never at risk.
+#
+# Three passes: management_cidrs with two entries, then [] and null (the UI
+# default / an omitted value). The ManagementIPs ipset must hold exactly
+# loopback + management_cidrs — no site address hard-coded for every gateway.
+- name: firewall on an OpenWrt container
+  hosts: openwrt
+  remote_user: root
+  gather_facts: false
+  vars:
+    local_ip_address: 192.168.1.1
+    # The ManagementIPs ipset's entries, found by name (not by section index).
+    mgmt_entries: >-
+      s=$(uci show firewall | sed -n "s/^firewall\\.\\(.*\\)\\.name='ManagementIPs'$/\\1/p");
+      [ -n "$s" ] && uci -q get "firewall.$s.entry"
+    management_cidrs:
+      - cidr: 192.0.2.0/24
+      - cidr: 198.51.100.7/32
+  roles:
+    - gekmihesg.openwrt
+  tasks:
+    - ansible.builtin.import_tasks: tasks/firewall.yaml
+
+    - name: "check: ManagementIPs = loopback + management_cidrs"
+      ansible.builtin.raw: "{{ mgmt_entries }}"
+      register: mgmt
+      changed_when: false
+      failed_when: mgmt.stdout | trim != "127.0.0.0/8 192.0.2.0/24 198.51.100.7/32"
+
+    - name: "check: the rendered ruleset passes fw4/nftables check mode"
+      ansible.builtin.raw: fw4 check 2>&1
+      register: fwcheck
+      changed_when: false
+      failed_when: fwcheck.rc != 0 or 'Ruleset passes nftables check.' not in fwcheck.stdout or fwcheck.stdout is search('(?i)error|warning')
+
+    - name: "check: the nft set carries the management CIDRs"
+      ansible.builtin.raw: fw4 -q print | tr -s ' \t\n' ' ' | grep -o 'set ManagementIPs {[^}]*}'
+      register: nftset
+      changed_when: false
+      failed_when: >-
+        nftset.rc != 0 or '127.0.0.0/8' not in nftset.stdout or '192.0.2.0/24' not in nftset.stdout
+        or '198.51.100.7' not in nftset.stdout or '10.2.0.47' in nftset.stdout
+
+    - ansible.builtin.import_tasks: tasks/firewall.yaml
+      vars:
+        management_cidrs: []
+
+    - name: "check: empty management_cidrs leaves only loopback"
+      ansible.builtin.raw: "{{ mgmt_entries }} && fw4 check 2>&1"
+      register: empty
+      changed_when: false
+      failed_when: >-
+        empty.rc != 0 or empty.stdout_lines[0] | trim != "127.0.0.0/8"
+        or 'Ruleset passes nftables check.' not in empty.stdout or empty.stdout is search('(?i)error|warning')
+
+    - ansible.builtin.import_tasks: tasks/firewall.yaml
+      vars:
+        management_cidrs: null
+
+    - name: "check: null management_cidrs leaves only loopback"
+      ansible.builtin.raw: "{{ mgmt_entries }} && fw4 check 2>&1"
+      register: nullcidrs
+      changed_when: false
+      failed_when: >-
+        nullcidrs.rc != 0 or nullcidrs.stdout_lines[0] | trim != "127.0.0.0/8"
+        or 'Ruleset passes nftables check.' not in nullcidrs.stdout or nullcidrs.stdout is search('(?i)error|warning')

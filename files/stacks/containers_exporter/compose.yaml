@@ -9,7 +9,9 @@ x-logging:
 
 services:
   srv:
-    image: ghcr.io/oriolrius/docker_container_exporter:latest
+    # No release tag carries the current build (v1.0.0 predates the 2026-10-22
+    # CA-bundle/certifi fix, master 328d94b): pinned by digest.
+    image: ghcr.io/oriolrius/docker_container_exporter:master@sha256:7719e58fe80ba27a9cec9c104a09ee57169fcd74b010b8fb91b3ac9919622971
     build:
       context: .
       dockerfile: Dockerfile
@@ -18,7 +20,9 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     ports:
-      - "127.0.0.1:${PORT}:8118"
+      # The exporter listens on $PORT (from .env, containers_exporter_port), not on
+      # a fixed 8118: publish that same port (Alloy scrapes it, metrics.alloy.j2).
+      - "127.0.0.1:${PORT}:${PORT}"
     privileged: true
     restart: unless-stopped
     logging: *default-logging

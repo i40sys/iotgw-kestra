@@ -1,8 +1,10 @@
 data/.npm/
 data/node_modules/
+data/externalModules/
 data/*.backup
-data/projects/*
-!data/projects/.sshkeys/
+data/projects/
 data/.sessions.json
-data/.config.projects.json
+data/.config.*.json
+data/.gitconfig
+data/.iotgw-credential-secret
 .env
