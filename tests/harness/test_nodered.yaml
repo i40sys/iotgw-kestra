@@ -1,5 +1,6 @@
 ---
-# Harness test: Node-RED standalone (no flows repo), behind its admin login.
+# Harness test: Node-RED standalone (no flows repo), behind its admin login,
+# and the upgrade of a gateway provisioned with the previous version (3.1).
 - name: nodered stack on an OpenWrt container
   hosts: openwrt
   remote_user: root
@@ -9,13 +10,20 @@
     nodered: true
     nodered_user: admin
     nodered_password: harness-pass
+    login: >-
+      curl -s -d 'client_id=node-red-admin&grant_type=password&scope=*&username=admin&password=harness-pass'
+      http://127.0.0.1:1880/auth/token | sed -n 's/.*"access_token":"\([^"]*\)".*/\1/p'
   roles:
     - gekmihesg.openwrt
   tasks:
     - ansible.builtin.import_tasks: tests/harness/prep_docker.yaml
-    - ansible.builtin.import_tasks: tasks/nodered.yaml
 
-    - name: "check: the editor answers on :1880"
+    # ---- a gateway as provisioned before: Node-RED 3.1 ---------------------------
+    - ansible.builtin.import_tasks: tasks/nodered.yaml
+      vars:
+        nodered_version: "3.1"
+
+    - name: "check: the editor answers on :1880 (3.1)"
       ansible.builtin.raw: curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:1880/
       register: up
       retries: 30
@@ -29,21 +37,43 @@
       changed_when: false
       failed_when: anon.stdout != "401"
 
-    - name: "check: the admin login works"
-      ansible.builtin.raw: >-
-        curl -s -d 'client_id=node-red-admin&grant_type=password&scope=*&username=admin&password=harness-pass'
-        http://127.0.0.1:1880/auth/token | grep -q access_token
-      changed_when: false
-
     - name: "check: projects mode is off without a flows repo"
       ansible.builtin.raw: grep -qx "NODE_RED_PROJECTS='false'" /opt/stacks/nodered/.env
       changed_when: false
 
-    # Re-provisioning must keep the local flows (data/ survives).
-    - name: "harness: a local flow before re-provisioning"
+    - name: "harness: a local flow on the 3.1 gateway"
       ansible.builtin.raw: echo '[{"id":"harness","type":"tab","label":"kept"}]' > /opt/stacks/nodered/data/flows.json
       changed_when: false
+
+    # ---- re-provisioned with the current default ----------------------------------
     - ansible.builtin.import_tasks: tasks/nodered.yaml
-    - name: "check: the local flow survived the re-provisioning"
-      ansible.builtin.raw: grep -q '"label":"kept"' /opt/stacks/nodered/data/flows.json
+
+    - name: "check: the stack now runs nodered/node-red:5.0.9"
+      ansible.builtin.raw: docker inspect -f '{{ "{{" }}.Config.Image{{ "}}" }}' $(docker ps -q --filter name=nodered)
+      register: img
+      changed_when: false
+      failed_when: img.stdout | trim != "nodered/node-red:5.0.9"
+
+    - name: "check: the editor answers on :1880 (5.0.9)"
+      ansible.builtin.raw: curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:1880/
+      register: up2
+      retries: 30
+      delay: 3
+      until: up2.stdout == "200"
+      changed_when: false
+
+    - name: "check: the admin login still works, and the runtime reports 5.0.9"
+      ansible.builtin.raw: >-
+        t=$({{ login }}); [ -n "$t" ] &&
+        curl -s -H "Authorization: Bearer $t" http://127.0.0.1:1880/settings | grep -q '"version":"5.0.9"'
+      changed_when: false
+
+    - name: "check: the 3.1 flow survived the upgrade and is loaded"
+      ansible.builtin.raw: >-
+        t=$({{ login }});
+        curl -s -H "Authorization: Bearer $t" http://127.0.0.1:1880/flows | grep -q '"label":"kept"'
+      register: flows
+      retries: 10
+      delay: 3
+      until: flows.rc == 0
       changed_when: false

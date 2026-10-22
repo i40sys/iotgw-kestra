@@ -4,6 +4,14 @@
   ansible.builtin.set_fact:
     iotgw_nodered_flows_repo: "{{ iotgw_nodered_flows_repo | default(nodered_flows_repo | default(false) | bool) | bool }}"
 
+# ONE Node-RED version for the stack (compose, via .env) and the password-hash
+# helper below. An exact release, so every gateway runs the same build. A
+# `nodered_version` variable overrides it (the harness uses it for the upgrade test;
+# the deployment schema does not expose it).
+- name: "nodered: resolve the Node-RED version"
+  ansible.builtin.set_fact:
+    iotgw_nodered_version: "{{ nodered_version | default('5.0.9', true) | string }}"
+
 - name: "nodered: Check if Docker stack is running"
   community.docker.docker_compose_v2:
     project_src: /opt/stacks/nodered
@@ -54,7 +62,7 @@
 - name: "nodered: cyphering admin password"
   community.docker.docker_container:
     name: nodered_temp
-    image: nodered/node-red:3.1
+    image: "nodered/node-red:{{ iotgw_nodered_version }}"
     entrypoint: /usr/local/bin/node
     env:
       NR_ADMIN_PASSWORD: "{{ nodered_password }}"
