@@ -1,0 +1,36 @@
+---
+# Harness test: Uptime Kuma + AutoKuma. The admin is bootstrapped from
+# autokuma_username/autokuma_password on an empty database every run.
+- name: uptime-kuma stack on an OpenWrt container
+  hosts: openwrt
+  remote_user: root
+  gather_facts: false
+  vars:
+    uptime_kuma: true
+    autokuma_username: harness
+    autokuma_password: harness123
+    iotgw_hostname: gw-harness
+    local_domain: lan
+    local_ip_address: 127.0.0.1
+  roles:
+    - gekmihesg.openwrt
+  tasks:
+    - ansible.builtin.import_tasks: tests/harness/prep_docker.yaml
+    - ansible.builtin.import_tasks: tasks/uptime-kuma.yaml
+    - ansible.builtin.import_tasks: tasks/uptime-kuma.yaml
+
+    - name: "check: Uptime Kuma answers on :3003"
+      ansible.builtin.raw: curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3003/
+      register: web
+      retries: 30
+      delay: 3
+      until: web.stdout in ["200", "302"]
+      changed_when: false
+
+    - name: "check: the admin (bootstrapped from autokuma_*) can read /metrics"
+      ansible.builtin.raw: curl -fsS -u harness:harness123 http://127.0.0.1:3003/metrics
+      register: metrics
+      retries: 10
+      delay: 3
+      until: metrics.rc == 0 and '# HELP' in metrics.stdout
+      changed_when: false
