@@ -4,18 +4,23 @@
   ansible.builtin.set_fact:
     iotgw_mqtt_bridge: "{{ iotgw_mqtt_bridge | default(mqtt_bridge | default(iiot_host is defined and iiot_host is not none and (iiot_host | string | trim) != '') | bool) | bool }}"
 
-- name: "mosquitto: Check if Docker stack is running"
-  community.docker.docker_compose_v2:
-    project_src: /opt/stacks/mosquitto
-    state: present
-  register: stack_status
-  ignore_errors: true
+# Re-provisioning tears the existing stack down before its directory is
+# replaced; a fresh gateway has none. Look for its compose file (every name
+# `docker compose` accepts, so a stack an older revision deployed is found too)
+# instead of running compose on a missing directory, which logged a red, ignored
+# `fatal: ... is not a directory` on every first install (and `state: present`
+# started an existing stack just to tear it down).
+- name: "mosquitto: Look for an existing Docker stack"
+  ansible.builtin.stat:
+    path: "/opt/stacks/mosquitto/{{ item }}"
+  loop: [compose.yaml, compose.yml, docker-compose.yaml, docker-compose.yml]
+  register: stack_files
 
-- name: "mosquitto: Teardown the Docker stack if running"
+- name: "mosquitto: Teardown the existing Docker stack"
   community.docker.docker_compose_v2:
     project_src: /opt/stacks/mosquitto
     state: absent
-  when: stack_status is not failed
+  when: stack_files.results | selectattr('stat.exists') | list | length > 0
 
 - name: "mosquitto: Remove directory /opt/stacks/mosquitto"
   ansible.builtin.file:
