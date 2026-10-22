@@ -1,0 +1,22 @@
+---
+# Harness test: Dockge (stack manager UI, host network, :5001).
+- name: dockge stack on an OpenWrt container
+  hosts: openwrt
+  remote_user: root
+  gather_facts: false
+  vars:
+    dockge: true
+  roles:
+    - gekmihesg.openwrt
+  tasks:
+    - ansible.builtin.import_tasks: tests/harness/prep_docker.yaml
+    - ansible.builtin.import_tasks: tasks/dockge.yaml
+    - ansible.builtin.import_tasks: tasks/dockge.yaml
+
+    - name: "check: the Dockge UI answers on :5001"
+      ansible.builtin.raw: curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:5001/
+      register: web
+      retries: 30
+      delay: 3
+      until: web.stdout == "200"
+      changed_when: false

@@ -4,29 +4,129 @@
   ansible.builtin.set_fact:
     iotgw_nodered_flows_repo: "{{ iotgw_nodered_flows_repo | default(nodered_flows_repo | default(false) | bool) | bool }}"
 
-# ONE Node-RED version for the stack (compose, via .env) and the password-hash
-# helper below. An exact release, so every gateway runs the same build. A
+# ONE Node-RED version for the stack (compose, via .env) and the helper
+# containers below. An exact release, so every gateway runs the same build. A
 # `nodered_version` variable overrides it (the harness uses it for the upgrade test;
 # the deployment schema does not expose it).
 - name: "nodered: resolve the Node-RED version"
   ansible.builtin.set_fact:
     iotgw_nodered_version: "{{ nodered_version | default('5.0.9', true) | string }}"
 
-- name: "nodered: Check if Docker stack is running"
-  community.docker.docker_compose_v2:
-    project_src: /opt/stacks/nodered
-    state: present
-  register: stack_status
-  ignore_errors: true
+# The flows repo: github.com/<github_org>/flows.<iotgw_hostname>, checked out on
+# the CONTROLLER (the Kestra runner) and copied to the gateway — the gateway
+# holds no Git credential and never talks to GitHub. `iotgw_nodered_flows_url`
+# is an internal override (the harness points it at a local fixture repo).
+- name: "nodered: resolve the flows repo"
+  when: iotgw_nodered_flows_repo
+  ansible.builtin.set_fact:
+    iotgw_nodered_project: "flows.{{ iotgw_hostname }}"
+    iotgw_nodered_flows_url: "{{ iotgw_nodered_flows_url | default('https://github.com/' ~ github_org ~ '/flows.' ~ iotgw_hostname ~ '.git', true) }}"
+    iotgw_nodered_flows_branch: "{{ nodered_flows_branch | default('', true) | string | trim }}"
+    iotgw_nodered_flows_work: "/tmp/iotgw-nodered-{{ inventory_hostname }}"
+    iotgw_nodered_git_name: "{{ iotgw_hostname }}"
+    iotgw_nodered_git_email: "{{ iotgw_hostname }}@{{ local_domain | default('iotgw.invalid', true) }}"
 
-- name: "nodered: Teardown the Docker stack if running"
+# ---- flows repo, controller side (before the stack is stopped: a clone that
+# fails leaves the running Node-RED alone) -------------------------------------
+- name: "nodered: controller: fresh work directory for the flows checkout"
+  when: iotgw_nodered_flows_repo
+  delegate_to: localhost
+  ansible.builtin.file:
+    path: "{{ iotgw_nodered_flows_work }}"
+    state: "{{ item }}"
+    mode: '0700'
+  loop: [absent, directory]
+
+# A private repo takes the optional read-only `nodered_flows_token`. It is only
+# ever an HTTP header in this process's environment (GIT_CONFIG_* → git -c), so
+# it is not on the command line, not in the checkout's .git/config and not
+# logged; the gateway never sees it. No credential helper, no prompt.
+- name: "nodered: controller: clone {{ iotgw_nodered_flows_url | default('') }}"
+  when: iotgw_nodered_flows_repo
+  delegate_to: localhost
+  ansible.builtin.command:
+    argv: >-
+      {{ ['git', 'clone', '--quiet']
+         + (['--branch', iotgw_nodered_flows_branch] if iotgw_nodered_flows_branch else [])
+         + ['--', iotgw_nodered_flows_url, iotgw_nodered_flows_work ~ '/' ~ iotgw_nodered_project] }}
+  environment: >-
+    {{ {'GIT_TERMINAL_PROMPT': '0', 'GIT_ASKPASS': '/bin/false', 'GIT_CONFIG_NOSYSTEM': '1',
+        'GIT_CONFIG_COUNT': '1', 'GIT_CONFIG_KEY_0': 'credential.helper', 'GIT_CONFIG_VALUE_0': ''}
+       | combine({'GIT_CONFIG_COUNT': '2', 'GIT_CONFIG_KEY_1': 'http.extraHeader',
+                  'GIT_CONFIG_VALUE_1': 'Authorization: Basic ' ~ ('x-access-token:' ~ nodered_flows_token) | b64encode}
+                 if (nodered_flows_token | default('', true) | string | trim) else {}) }}
+  register: nodered_flows_clone
+  changed_when: true
+  failed_when: false
+  no_log: true  # the environment carries the token
+
+- name: "nodered: controller: the flows repo could not be cloned"
+  when: iotgw_nodered_flows_repo and nodered_flows_clone.rc != 0
+  ansible.builtin.fail:
+    msg: >-
+      git clone of {{ iotgw_nodered_flows_url }}
+      {%- if iotgw_nodered_flows_branch %} (branch {{ iotgw_nodered_flows_branch }}){% endif %}
+      failed (rc {{ nodered_flows_clone.rc }}): {{ (_stderr | replace(_token, '***')) if _token else _stderr }}.
+      The repo must exist; a private one needs `nodered_flows_token` (read-only).
+      Or turn off `nodered_flows_repo`. Node-RED on the gateway was not touched.
+  vars:
+    _stderr: "{{ nodered_flows_clone.stderr | default('') | trim }}"
+    _token: "{{ nodered_flows_token | default('', true) | string | trim }}"
+
+# The checkout keeps its .git (Node-RED projects mode needs it) but no auth:
+# origin is the plain https URL, no credential/url/http config sections, and the
+# token must not appear anywhere in .git/.
+- name: "nodered: controller: scrub the checkout's git config (plain origin, no credentials)"
+  when: iotgw_nodered_flows_repo
+  delegate_to: localhost
+  ansible.builtin.shell: |
+    set -eu
+    cd "{{ iotgw_nodered_flows_work }}/{{ iotgw_nodered_project }}"
+    git remote set-url origin "$FLOWS_URL"
+    for s in $(git config --local --name-only --list | sed -n 's/^\(credential\|http\|url\)\..*/\1/p' | sort -u); do
+      git config --local --remove-section "$s" 2>/dev/null || true
+    done
+    if [ -n "${FLOWS_TOKEN:-}" ] && grep -rqF -- "$FLOWS_TOKEN" .git; then
+      echo "the flows token ended up in the checkout's .git" >&2; exit 1
+    fi
+    git rev-parse --short HEAD
+  environment:
+    FLOWS_URL: "{{ iotgw_nodered_flows_url }}"
+    FLOWS_TOKEN: "{{ nodered_flows_token | default('', true) | string | trim }}"
+  register: nodered_flows_head
+  changed_when: false
+  no_log: true  # FLOWS_TOKEN
+
+- name: "nodered: controller: pack the checkout"
+  when: iotgw_nodered_flows_repo
+  delegate_to: localhost
+  ansible.builtin.command:
+    argv: [tar, -C, "{{ iotgw_nodered_flows_work }}", -czf, "{{ iotgw_nodered_flows_work }}.tar.gz", "{{ iotgw_nodered_project }}"]
+  changed_when: false
+
+# Re-provisioning tears the existing stack down first; a fresh gateway has
+# none. Look for its compose file and .env (same pattern as the other stacks)
+# instead of running compose on a missing directory, which logged a red,
+# ignored `fatal: ... is not a directory` on every first install.
+- name: "nodered: Look for an existing Docker stack"
+  ansible.builtin.stat:
+    path: "/opt/stacks/nodered/{{ item }}"
+  loop: [compose.yaml, compose.yml, docker-compose.yaml, docker-compose.yml, .env]
+  register: stack_files
+
+- name: "nodered: Teardown the existing Docker stack"
   community.docker.docker_compose_v2:
     project_src: /opt/stacks/nodered
     state: absent
-  when: stack_status is not failed
+  vars:
+    found: "{{ stack_files.results | selectattr('stat.exists') | map(attribute='item') | list }}"
+  # Also needs .env: compose will not load this project without it (not even
+  # to tear it down), and it is written just before the stack starts, so a
+  # directory without it (a run that failed half-way) has no stack running.
+  when: found | reject('eq', '.env') | list | length > 0 and '.env' in found
 
-# Keep data/: without a flows repo the flows live only in data/flows.json, so
-# wiping the whole directory (as before) would lose them on every run.
+# Keep data/: the flows (data/flows.json or the project), the credential key and
+# Node-RED's own config live there; wiping it would lose them on every run.
 - name: "nodered: Find the previous stack files (all but data/)"
   ansible.builtin.find:
     paths: /opt/stacks/nodered
@@ -48,6 +148,7 @@
     src: stacks/nodered/
     dest: /opt/stacks/nodered/
     mode: preserve
+
 - name: "nodered: setting up data directory"
   ansible.builtin.file:
     path: /opt/stacks/nodered/data
@@ -55,6 +156,29 @@
     owner: 1000
     group: 1000
     mode: '0755'
+
+# The flow-credential key (settings.js `credentialSecret`, and the project's key
+# in projects mode): made ONCE on the gateway and kept in data/, so credentials
+# survive container recreation and re-provisioning; never in git or in .env. A
+# gateway provisioned before (v0.7.1) has Node-RED's system-generated key in
+# .config.runtime.json: that one is adopted, so its flows_cred.json still opens.
+- name: "nodered: flow-credential key (created once per gateway)"
+  ansible.builtin.shell: |
+    set -eu
+    f=/opt/stacks/nodered/data/.iotgw-credential-secret
+    if [ ! -s "$f" ]; then
+      umask 077
+      k=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("_credentialSecret") or "")' \
+            /opt/stacks/nodered/data/.config.runtime.json 2>/dev/null || true)
+      [ -n "$k" ] || k=$(python3 -c 'import secrets; print(secrets.token_hex(32))' 2>/dev/null || true)
+      [ -n "$k" ] || k=$(head -c 64 /dev/urandom | sha256sum | cut -c1-64)
+      [ "$(printf %s "$k" | wc -c)" -ge 32 ] || { echo "could not make a credential key" >&2; exit 1; }
+      printf '%s' "$k" > "$f.tmp"
+      mv "$f.tmp" "$f"
+      echo created
+    fi
+  register: nodered_credential_key
+  changed_when: "'created' in nodered_credential_key.stdout"
 
 # task-130: the password travels in the container ENV, not interpolated into
 # JS source on the command line (a quote in it broke the command and it was
@@ -95,74 +219,100 @@
     mode: '0640'
   no_log: true  # admin password hash
 
-# ---- optional flows repo (nodered_flows_repo) ---------------------------------
-- name: "nodered: Fetch .config.projects.json.j2"
+# ---- flows repo, gateway side (nodered_flows_repo) ----------------------------
+- name: "nodered: copy the flows checkout to the gateway"
   when: iotgw_nodered_flows_repo
-  ansible.builtin.fetch:
-    src: /opt/stacks/nodered/data/.config.projects.json.j2
-    dest: /tmp/.config.projects.json.j2
-    flat: yes
+  ansible.builtin.copy:
+    src: "{{ iotgw_nodered_flows_work }}.tar.gz"
+    dest: /opt/stacks/nodered/flows-incoming.tar.gz
+    mode: '0600'
 
-- name: "nodered: Update the .config.projects.json with new hostname"
+- name: "nodered: unpack the flows checkout next to the project"
+  when: iotgw_nodered_flows_repo
+  ansible.builtin.shell: |
+    set -eu
+    d=/opt/stacks/nodered/data/projects/.iotgw-incoming
+    rm -rf "$d" && mkdir -p "$d"
+    tar -C "$d" -xzf /opt/stacks/nodered/flows-incoming.tar.gz
+    rm -f /opt/stacks/nodered/flows-incoming.tar.gz
+    chown -R 1000:1000 /opt/stacks/nodered/data/projects
+  changed_when: false
+
+# Never silently destroys the operator's work: files/stacks/nodered/flows-sync.sh
+# replaces the project only when it has no uncommitted change and no unpushed
+# commit, otherwise keeps it and says so (README.md "Flows repo").
+- name: "nodered: install the flows checkout as the project (keeps local changes)"
+  when: iotgw_nodered_flows_repo
+  ansible.builtin.shell: >-
+    docker run --rm --user=1000:1000 --network=none --entrypoint=/bin/sh
+    -v /opt/stacks/nodered/data:/data
+    -v /opt/stacks/nodered/flows-sync.sh:/flows-sync.sh:ro
+    'nodered/node-red:{{ iotgw_nodered_version }}' /flows-sync.sh '{{ iotgw_nodered_project }}'
+  register: nodered_flows_sync
+  changed_when: nodered_flows_sync.stdout is search('flows-sync. (installed|replaced)')
+
+- name: "nodered: flows repo result"
+  when: iotgw_nodered_flows_repo
+  ansible.builtin.debug:
+    msg: >-
+      {{ nodered_flows_sync.stdout | trim }} (repo {{ iotgw_nodered_flows_url }}
+      at {{ nodered_flows_head.stdout | default('?') | trim }}).
+      {%- if 'flows-sync: kept' in nodered_flows_sync.stdout %} WARNING: the gateway
+      keeps its own copy of the project; the repo's version was NOT applied.{% endif %}
+
+# `cat`, not slurp: the OpenWrt role's slurp needs a `base64` applet the
+# gateways' BusyBox lacks (it returns no content).
+- name: "nodered: read the flow-credential key (for the project config)"
+  when: iotgw_nodered_flows_repo
+  ansible.builtin.command: cat /opt/stacks/nodered/data/.iotgw-credential-secret
+  register: nodered_credential_key_file
+  changed_when: false
+  no_log: true
+
+# The project Node-RED opens at start (projects mode is NODE_RED_PROJECTS in
+# .env → settings.js), with the gateway's credential key.
+- name: "nodered: active project config (.config.projects.json)"
   when: iotgw_nodered_flows_repo
   ansible.builtin.template:
-    src: /tmp/.config.projects.json.j2
+    src: "{{ playbook_dir }}/files/stacks/nodered/data/.config.projects.json.j2"
     dest: /opt/stacks/nodered/data/.config.projects.json
     force: true
     owner: 1000
     group: 1000
-    mode: '0644'
-
-- name: "nodered: clonning repos"
-  when: iotgw_nodered_flows_repo
-  ansible.builtin.git:
-    repo: "git@github.com:{{ github_org }}/flows.{{ iotgw_hostname }}.git"
-    dest: "/opt/stacks/nodered/data/projects/flows.{{ iotgw_hostname }}"
-    accept_hostkey: true
-
-    key_file: /root/.ssh/id_rsa
-- name: "nodered: Find all directories inside /opt/stacks/nodered/data"
-  ansible.builtin.find:
-    paths: /opt/stacks/nodered/data
-    recurse: yes
-    hidden: true
-    file_type: directory
-  register: directories
-
-- name: "nodered: set ownership and permissions on directories"
-  ansible.builtin.file:
-    path: "{{ item.path }}"
-    state: directory
-    owner: 1000
-    group: 1000
-    mode: '0755'
-  loop: "{{ directories.files }}"
-
-- name: "nodered: find all files inside /opt/stacks/nodered/data"
-  ansible.builtin.find:
-    paths: /opt/stacks/nodered/data
-    recurse: yes
-    hidden: true
-    file_type: file
-  register: files
-
-- name: "nodered: set ownership and permissions on files"
-  ansible.builtin.file:
-    path: "{{ item.path }}"
-    state: file
-    owner: 1000
-    group: 1000
-    mode: '0644'
-  loop: "{{ files.files }}"
-
-- name: "nodered: SSH key permissions"
-  when: iotgw_nodered_flows_repo
-  ansible.builtin.file:
-    path: "/opt/stacks/nodered/data/projects/.sshkeys/admin_id_rsa"
-    state: file
-    owner: 1000
-    group: 1000
     mode: '0600'
+  vars:
+    iotgw_nodered_credential_secret: "{{ nodered_credential_key_file.stdout | trim }}"
+  no_log: true  # credential key
+
+- name: "nodered: git committer for the editor (.gitconfig)"
+  when: iotgw_nodered_flows_repo
+  ansible.builtin.template:
+    src: "{{ playbook_dir }}/files/stacks/nodered/data/.gitconfig.j2"
+    dest: /opt/stacks/nodered/data/.gitconfig
+    owner: 1000
+    group: 1000
+    mode: '0644'
+
+- name: "nodered: controller: remove the flows checkout"
+  when: iotgw_nodered_flows_repo
+  delegate_to: localhost
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "{{ iotgw_nodered_flows_work }}"
+    - "{{ iotgw_nodered_flows_work }}.tar.gz"
+
+# One recursive chown (Node-RED runs as uid 1000): a per-file loop took one
+# task round-trip per file, which a project's .git and node_modules make slow.
+- name: "nodered: data/ owned by the node-red user; the credential key private"
+  ansible.builtin.shell: |
+    set -eu
+    chown -R 1000:1000 /opt/stacks/nodered/data
+    chmod -R u+rwX,go+rX,go-w /opt/stacks/nodered/data
+    chmod 0600 /opt/stacks/nodered/data/.iotgw-credential-secret
+    [ ! -f /opt/stacks/nodered/data/.config.projects.json ] || chmod 0600 /opt/stacks/nodered/data/.config.projects.json
+  changed_when: false
 
 - name: "nodered: Start Docker stack"
   community.docker.docker_compose_v2:

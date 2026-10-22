@@ -21,6 +21,7 @@
     loki_oauth2_client_id: harness
     loki_oauth2_client_secret: harness-secret
     uptime_kuma: false
+    containers_exporter_port: 9118
 
   roles:
     - gekmihesg.openwrt
@@ -65,6 +66,10 @@
 
     - name: "check: the rendered configs are there"
       ansible.builtin.raw: test -s /opt/stacks/alloy/etc/base.alloy && test -s /opt/stacks/alloy/etc/writers.alloy && test -s /opt/stacks/alloy/etc/metrics.alloy
+      changed_when: false
+
+    - name: "check: Alloy scrapes the containers exporter on containers_exporter_port"
+      ansible.builtin.raw: grep -q '"__address__" = "localhost:9118"' /opt/stacks/alloy/etc/metrics.alloy
       changed_when: false
 
     - name: "check: the service is enabled at boot"
