@@ -110,7 +110,7 @@ services:
 Create an `.env` file in the root directory of your project with the following variables:
 
 ```env
-NODERED_VERSION='3.1'
+NODERED_VERSION='5.0.9'
 TZ='Europe/Madrid'
 HOSTNAME='iot-gw_maqX'
 NODE_RED_USER='admin'
@@ -119,7 +119,7 @@ NODE_RED_PASSWORD='$2a$08$2fd5hMwc81S7MYjua93bh.6jp/3t/xWiRwMk3xT1kLPUFxET.s5MG'
 
 **Explanation:**
 
-- **NODERED_VERSION**: Specifies the Node-RED Docker image version (`3.1` in this case).
+- **NODERED_VERSION**: Specifies the Node-RED Docker image version (`5.0.9` in this case).
 - **TZ**: Sets the timezone for the container (`Europe/Madrid`).
 - **HOSTNAME**: Sets the hostname for the container, which should match your IoT Gateway's hostname (`iot-gw_maqX`).
 - **NODE_RED_USER**: Defines the username for the Node-RED admin user (`admin`).
@@ -240,7 +240,7 @@ Ansible automates the provisioning and deployment of the Node-RED Docker stack, 
 
 - `nodered_password`: The plaintext admin password for Node-RED, which will be hashed and stored in the `.env` file.
 - `iotgw_hostname`: The hostname or identifier of the IoT Gateway (e.g., `iot-gw_maq3`).
-- `NODERED_VERSION`: The version of Node-RED to deploy (e.g., `'3.1'`).
+- `NODERED_VERSION`: The version of Node-RED to deploy (e.g., `'5.0.9'`; set once in tasks/nodered.yaml as `iotgw_nodered_version`).
 - `TZ`: The timezone setting for the container (e.g., `'Europe/Madrid'`).
 - `GIT_REPO_BASE_URL`: Base URL for the Git repositories (e.g., `git@github.com:sabatligats`).
 
