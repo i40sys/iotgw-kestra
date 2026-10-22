@@ -34,6 +34,8 @@ image is built once and cached (`iotgw-harness-target:<hash>`). CI:
 | `test_duplicati.yaml` | duplicati | both backup jobs valid JSON, web UI on `:8200` |
 | `test_netxms.yaml` | NetXMS agent | `nxagentd` running |
 | `test_lldpd.yaml` | lldpd | daemon running |
+| `test_containers_exporter.yaml` | containers_exporter (pinned image) | runs the pinned digest, stays up, `/metrics` on `127.0.0.1:containers_exporter_port`; a 3rd run recovers a stack dir left without `.env` |
+| `test_vscode.yaml` | VSCode / code-server (pinned image) | runs the pinned digest, `:8443/healthz` answers, `/` redirects to the login |
 | `test_firewall.yaml` | firewall (`tasks/firewall.yaml`, three passes: two `management_cidrs`, `[]`, `null`) | `ManagementIPs` = loopback + `management_cidrs` only, `fw4 check` (nft check mode, never loaded) passes, the nft set carries the CIDRs |
 
 Docker stacks first run `prep_docker.yaml`: the packages they use from
