@@ -1,6 +1,7 @@
 ---
 # Harness test: Node-RED standalone (no flows repo), behind its admin login,
-# and the upgrade of a gateway provisioned with the previous version (3.1).
+# and the upgrade of a gateway provisioned with the previous version (3.1);
+# plus the settings ported from the v3 stack and the per-gateway credential key.
 - name: nodered stack on an OpenWrt container
   hosts: openwrt
   remote_user: root
@@ -17,6 +18,14 @@
     - gekmihesg.openwrt
   tasks:
     - ansible.builtin.import_tasks: tests/harness/prep_docker.yaml
+
+    # A gateway provisioned by v0.7.1 has Node-RED's system-generated key in
+    # .config.runtime.json; provisioning must adopt it, not make a new one.
+    - name: "harness: a v0.7.1-style system credential key"
+      ansible.builtin.raw: >-
+        mkdir -p /opt/stacks/nodered/data &&
+        echo '{"_credentialSecret":"legacy-system-key-0123456789abcdef"}' > /opt/stacks/nodered/data/.config.runtime.json
+      changed_when: false
 
     # ---- a gateway as provisioned before: Node-RED 3.1 ---------------------------
     - ansible.builtin.import_tasks: tasks/nodered.yaml
@@ -36,6 +45,12 @@
       register: anon
       changed_when: false
       failed_when: anon.stdout != "401"
+
+    - name: "check: the existing system key was adopted as the gateway's credential key"
+      ansible.builtin.raw: >-
+        [ "$(cat /opt/stacks/nodered/data/.iotgw-credential-secret)" = legacy-system-key-0123456789abcdef ] &&
+        [ "$(ls -ln /opt/stacks/nodered/data/.iotgw-credential-secret | awk '{print $1, $3}')" = '-rw------- 1000' ]
+      changed_when: false
 
     - name: "check: projects mode is off without a flows repo"
       ansible.builtin.raw: grep -qx "NODE_RED_PROJECTS='false'" /opt/stacks/nodered/.env
@@ -76,4 +91,57 @@
       retries: 10
       delay: 3
       until: flows.rc == 0
+      changed_when: false
+
+    # ---- settings ported from the v3 stack (iotgw_nodered settings.js) -----------
+    - name: "check: the editor title names the gateway"
+      ansible.builtin.raw: >-
+        curl -s http://127.0.0.1:1880/ | grep -q '<title>NodeRED: gw-harness</title>'
+      changed_when: false
+
+    - name: "check: runtime settings (user key, pretty flows, no telemetry, function modules, no projects)"
+      ansible.builtin.raw: >-
+        t=$({{ login }}); s=$(curl -s -H "Authorization: Bearer $t" http://127.0.0.1:1880/settings);
+        for k in '"flowEncryptionType":"user"' '"flowFilePretty":true' '"telemetryEnabled":false' '"functionExternalModules":true' '"tours":false'; do
+        echo "$s" | grep -qF "$k" || { echo "missing $k"; exit 1; }; done;
+        ! echo "$s" | grep -q '"project":'
+      changed_when: false
+
+    # ---- flow credentials survive re-provisioning (stable per-gateway key) --------
+    - name: "harness: deploy a flow with a credential"
+      ansible.builtin.raw: >-
+        t=$({{ login }});
+        curl -sf -H "Authorization: Bearer $t" -H 'Content-Type: application/json'
+        -H 'Node-RED-Deployment-Type: full' http://127.0.0.1:1880/flows -d
+        '[{"id":"harness","type":"tab","label":"kept"},
+          {"id":"harness-broker","type":"mqtt-broker","name":"b","broker":"127.0.0.1","port":"1883",
+           "credentials":{"user":"cred-user","password":"cred-pass"}}]'
+      changed_when: false
+
+    - name: "check: flows.json is pretty-printed and flows_cred.json encrypted"
+      ansible.builtin.raw: >-
+        [ "$(wc -l < /opt/stacks/nodered/data/flows.json)" -gt 1 ] &&
+        grep -q '"[$]"' /opt/stacks/nodered/data/flows_cred.json &&
+        ! grep -q cred-pass /opt/stacks/nodered/data/flows_cred.json
+      register: saved
+      retries: 10
+      delay: 2
+      until: saved.rc == 0
+      changed_when: false
+
+    - ansible.builtin.import_tasks: tasks/nodered.yaml
+
+    - name: "check: the flow credential still decrypts after re-provisioning"
+      ansible.builtin.raw: >-
+        t=$({{ login }});
+        curl -s -H "Authorization: Bearer $t" http://127.0.0.1:1880/credentials/mqtt-broker/harness-broker
+        | grep -q '"user":"cred-user","has_password":true'
+      register: cred
+      retries: 20
+      delay: 3
+      until: cred.rc == 0
+      changed_when: false
+
+    - name: "check: the credential key is unchanged"
+      ansible.builtin.raw: '[ "$(cat /opt/stacks/nodered/data/.iotgw-credential-secret)" = legacy-system-key-0123456789abcdef ]'
       changed_when: false
