@@ -7,3 +7,13 @@
 iotgw_version: "v0.7.2"
 iotgw_openwrt_sha256_amd64: "8fa1233efe4fac6841598024afc555d00019ecb6dc59bcd6a0977ffd15c3280c"
 iotgw_openwrt_url: "https://github.com/i40sys/iotgw-ng/releases/download/{{ iotgw_version }}/iotgw-openwrt-linux-amd64.tar.gz"
+
+# The gateways' LuCI theme (iotgw-ng decision-039, task-161): the release's
+# luci-theme-iotgw_all.ipk, published by the iotgw-ng `live-image` CI (job
+# `theme`) on every v* tag since v0.9.0. Installed by tasks/luci_theme.yaml (provisioning).
+# PINNED: bump the version and the checksum together (the release's
+# luci-theme-iotgw-SHA256SUMS). Set iotgw_theme_src to a controller-local .ipk
+# to install an unreleased build.
+iotgw_theme_version: "v0.9.0"
+iotgw_theme_sha256: "ece16feedefe3cbad9b538bdf9084d77c8a50ff64cd4ed74a2abcc67eb9943d5"
+iotgw_theme_url: "https://github.com/i40sys/iotgw-ng/releases/download/{{ iotgw_theme_version }}/luci-theme-iotgw_all.ipk"

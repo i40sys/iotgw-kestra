@@ -1,0 +1,50 @@
+---
+# The gateways' LuCI theme: luci-theme-iotgw — the "IoT GW NG · Edge Console"
+# look (an Argon fork; iotgw-ng decision-039 / task-161). It replaces the
+# former `bootstrap-dark` selection. Built and published by the iotgw-ng
+# `live-image` CI (job `theme`) on every v* tag; pinned in vars/iotgw.yml.
+# Set iotgw_theme_src to a controller-local .ipk to install an unreleased build.
+# Runs after the package list (the theme's dependencies — wget, jsonfilter,
+# ucode-mod-math, flock, coreutils-timeout — come from the opkg feeds).
+
+- name: "system, luci theme: download the pinned package ({{ iotgw_theme_version }}) on the controller"
+  delegate_to: localhost
+  ansible.builtin.get_url:
+    url: "{{ iotgw_theme_url }}"
+    dest: "/tmp/luci-theme-iotgw-{{ iotgw_theme_version }}_all.ipk"
+    checksum: "sha256:{{ iotgw_theme_sha256 }}"
+    mode: "0644"
+  when: iotgw_theme_src is not defined
+
+- name: "system, luci theme: copy the package to the gateway"
+  ansible.builtin.copy:
+    src: "{{ iotgw_theme_src | default('/tmp/luci-theme-iotgw-' ~ iotgw_theme_version ~ '_all.ipk') }}"
+    dest: /tmp/luci-theme-iotgw_all.ipk
+    mode: "0644"
+
+# Same files as upstream Argon (/www/luci-static/argon, /etc/config/argon):
+# opkg refuses to install over it, so a hand-installed Argon goes first.
+- name: "system, luci theme: remove upstream Argon if present"
+  ansible.builtin.shell: |
+    removed=''
+    for p in luci-i18n-argon-config-es luci-i18n-argon-config-en luci-app-argon-config luci-theme-argon; do
+      opkg list-installed "$p" | grep -q . && opkg remove "$p" >/dev/null && removed="$removed $p"
+    done
+    echo "removed:$removed"
+  register: luci_theme_argon
+  changed_when: luci_theme_argon.stdout != 'removed:'
+
+- name: "system, luci theme: install luci-theme-iotgw"
+  ansible.builtin.command: opkg install /tmp/luci-theme-iotgw_all.ipk
+  register: luci_theme_install
+  changed_when: "'Installing' in luci_theme_install.stdout or 'Upgrading' in luci_theme_install.stdout"
+
+- name: "system, luci theme: select it (IoT GW NG Edge Console)"
+  ansible.builtin.shell: |
+    uci -q delete luci.themes.Argon
+    uci set luci.themes.IoTGW=/luci-static/argon
+    uci set luci.main.mediaurlbase=/luci-static/argon
+    if [ -n "$(uci changes luci)" ]; then uci commit luci; echo changed; fi
+    rm -rf /tmp/luci-indexcache* /tmp/luci-modulecache
+  register: luci_theme_select
+  changed_when: "'changed' in luci_theme_select.stdout"

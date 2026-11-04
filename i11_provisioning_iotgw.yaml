@@ -3,6 +3,9 @@
   hosts: all
   remote_user: root
   gather_facts: false
+  # Pinned iotgw-ng release artifacts (the LuCI theme; tasks/luci_theme.yaml).
+  vars_files:
+    - vars/iotgw.yml
   # iotgw-ng task-130: NO play-level defaults for the gateway's identity or
   # network. The former demo vars (iotgw_hostname iot-gw_maq0, root_password
   # "none", local_ip_address 10.121.100.1, local_domain, main_local_dns and the

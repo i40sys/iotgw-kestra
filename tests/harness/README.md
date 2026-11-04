@@ -40,6 +40,7 @@ image is built once and cached (`iotgw-harness-target:<hash>`). CI:
 | `test_dockge.yaml` | Dockge | UI on `:5001` |
 | `test_uptime_kuma.yaml` | Uptime Kuma + AutoKuma | UI on `:3003`, the bootstrapped admin reads `/metrics` |
 | `test_firewall.yaml` | firewall (`tasks/firewall.yaml`, three passes: two `management_cidrs`, `[]`, `null`) | `ManagementIPs` = loopback + `management_cidrs` only, `fw4 check` (nft check mode, never loaded) passes, the nft set carries the CIDRs |
+| `test_luci_theme.yaml` | LuCI theme (`luci-theme-iotgw`) | installed, upstream Argon absent, selected (`luci.main.mediaurlbase`), product identity module, assets world-readable |
 
 The first pass is a fresh install (no stack directory: the teardown is skipped,
 no ignored `fatal:`), the second a re-provisioning (the existing stack is torn

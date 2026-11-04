@@ -1,0 +1,34 @@
+---
+# Harness test: the LuCI theme (luci-theme-iotgw, iotgw-ng decision-039).
+# Installs the PINNED release package (vars/iotgw.yml); for an unreleased build
+# copy the .ipk into the repo and pass -e iotgw_theme_src=/work/<file>.
+- name: LuCI theme on an OpenWrt container
+  hosts: openwrt
+  remote_user: root
+  gather_facts: false
+  vars_files:
+    - vars/iotgw.yml
+  roles:
+    - gekmihesg.openwrt
+  tasks:
+    - name: "prep: opkg feeds (system.yaml updates them before the package list)"
+      ansible.builtin.raw: opkg update >/dev/null
+      changed_when: false
+    - ansible.builtin.import_tasks: tasks/luci_theme.yaml
+    # Twice, like the other stacks: the second run must be a no-op.
+    - ansible.builtin.import_tasks: tasks/luci_theme.yaml
+    - name: "check: luci-theme-iotgw installed, upstream Argon absent"
+      ansible.builtin.raw: |
+        opkg list-installed luci-theme-iotgw | grep -q . && ! opkg list-installed luci-theme-argon | grep -q .
+      changed_when: false
+    - name: "check: selected as the LuCI theme"
+      ansible.builtin.raw: |
+        [ "$(uci get luci.main.mediaurlbase)" = /luci-static/argon ] && [ "$(uci get luci.themes.IoTGW)" = /luci-static/argon ]
+      changed_when: false
+    - name: "check: product identity module and readable assets (uhttpd serves world-readable files only)"
+      ansible.builtin.raw: |
+        grep -q "Edge Console" /usr/share/ucode/luci/iotgw-product.uc &&
+        for f in /usr/share/ucode/luci/iotgw-product.uc /www/luci-static/argon/img/iotgw.svg /www/luci-static/argon/img/iotgw-bg.webp /www/luci-static/argon/icon/apps.svg /www/luci-static/argon/css/cascade.css; do
+          [ -n "$(find "$f" -perm -004)" ] || { echo "not world-readable: $f"; exit 1; }
+        done
+      changed_when: false

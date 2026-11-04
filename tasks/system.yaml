@@ -218,12 +218,9 @@
     mode: '0644'
   tags: [ntp]
 
-- name: "system, luci: dark mode"
-  uci:
-    command: set
-    key: luci.main
-    value:
-      mediaurlbase: "/luci-static/bootstrap-dark"
+# LuCI theme: luci-theme-iotgw ("IoT GW NG · Edge Console"; iotgw-ng
+# decision-039) — replaces the former bootstrap-dark selection.
+- ansible.builtin.import_tasks: luci_theme.yaml
 
 - name: "system, luci: timeout 0"
   uci:
